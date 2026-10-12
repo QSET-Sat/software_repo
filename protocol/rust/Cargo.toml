@@ -1,0 +1,19 @@
+[package]
+name = "qset-can-protocol"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = ["host-std"]
+host-std = []
+
+[lib]
+name = "qset_can_protocol"
+crate-type = ["rlib", "staticlib"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
