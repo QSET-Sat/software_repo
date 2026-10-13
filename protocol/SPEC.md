@@ -3,9 +3,10 @@
 Status: **draft foundation**. This document is the source of truth for the
 rules implemented in this repository. It incorporates the July 2026 QSET
 Custom CAN Protocol draft, with the command and telemetry base constants
-corrected to match their stated ranges. No message payload contract is yet
-approved. Changes to IDs, node assignments, or payloads must update this
-document, code, and tests in the same review.
+corrected to match their stated ranges. The first message catalog below is a
+review candidate; it is not implemented or approved yet. Changes to IDs, node
+assignments, or approved payloads must update this document, code, and tests in
+the same review.
 
 ## Frame contract
 
@@ -55,9 +56,112 @@ tiers, node ID occupies four bits and index occupies four bits where used.
 The heartbeat tier has only one ID per node. For example, an ADCS telemetry
 frame with index `2` has ID `0x432`. The ranges `0x010..0x0FF`,
 `0x300..0x3FF`, and `0x500..0x7FF` are unassigned. Any ID with an
-unregistered node is rejected, even if it lies inside a tier range. Error,
-command, and telemetry indexes are accepted structurally, but no index has a
-defined payload yet.
+unregistered node is rejected, even if it lies inside a tier range. The
+foundation parser accepts error, command, and telemetry indexes structurally.
+The proposed catalog below assigns index `0` in each of those tiers; a future
+message decoder will reject all other indexes until they are assigned.
+
+## Proposed message catalog
+
+Status: **candidate for subteam review**. These definitions are complete
+enough to implement, but they do not become the production contract until the
+OBC and affected subsystem teams approve them. Issue 4 will add codecs only
+after that approval.
+
+Every catalog decoder must require the exact DLC shown below. Bytes outside
+the DLC are not part of the frame and remain ignored. All multi-byte integers
+are unsigned and little-endian. Fields marked reserved must be transmitted as
+zero and rejected when nonzero. Enumerated values not explicitly assigned are
+rejected unless the field definition says otherwise.
+
+### Common node-state field
+
+The heartbeat and status telemetry use the same one-byte node state:
+
+| Value | Meaning |
+| --- | --- |
+| `0x00` | Starting: initialization is not complete |
+| `0x01` | Nominal: normal application work is enabled |
+| `0x02` | Degraded: operating with a known loss of capability |
+| `0x03` | Safe: only functions allowed by the safe-state policy are enabled |
+| `0x04` | Stopping: an orderly shutdown or reset is in progress |
+| `0x05..0xFE` | Reserved; reject |
+| `0xFF` | Invalid or unavailable; reject |
+
+This table defines the wire values, not the transitions, authority, or action
+associated with each state. Those service policies remain a separate review.
+
+### Heartbeat: node heartbeat
+
+- **ID:** the registered source node ID (`0x001..0x005` currently); heartbeat
+  has no separate message index.
+- **Sender / consumers:** every registered node sends its own heartbeat; all
+  nodes and diagnostic tools may consume it.
+- **Purpose:** identify a live node and expose its protocol version and current
+  state without carrying node-specific telemetry.
+- **DLC:** exactly `2`.
+
+| Byte | Field | Encoding, units, and validity |
+| --- | --- | --- |
+| `0` | Protocol version | `0x01` for this catalog; `0x00` is invalid and `0x02..0xFF` are reserved until assigned |
+| `1` | Node state | Common node-state value above |
+
+Golden vector: an EPS heartbeat in nominal state is ID `0x002`, DLC `2`, data
+`01 01`.
+
+### Error index 0: protocol violation
+
+- **ID:** `0x100 + source_node*0x10 + 0`.
+- **Sender / consumers:** any registered node that detects the violation sends
+  it; the OBC and diagnostic listeners consume it.
+- **Purpose:** report a rejected application-protocol frame without defining
+  subsystem-specific fault codes.
+- **DLC:** exactly `4`.
+
+| Byte(s) | Field | Encoding, units, and validity |
+| --- | --- | --- |
+| `0` | Reason | `0x01` unassigned message index; `0x02` wrong DLC; `0x03` invalid or reserved field value; `0x04` unauthorized sender; `0x00` and `0x05..0xFF` are reserved and rejected |
+| `1..2` | Offending arbitration ID | Unsigned 11-bit standard ID, little-endian; values above `0x07FF` are invalid |
+| `3` | Observed DLC | Raw DLC value `0..15`; `9..15` explicitly report a non-Classic-CAN length and `16..255` are invalid |
+
+Golden vector: EPS reporting wrong DLC (`0x02`) for command ID `0x220` with
+observed DLC `9` is ID `0x120`, DLC `4`, data `02 20 02 09`.
+
+### Command index 0: request status
+
+- **ID:** `0x200 + destination_node*0x10 + 0`.
+- **Sender / destination:** the OBC sends the command to the node named by the
+  ID. Other senders are unauthorized.
+- **Purpose:** request one status telemetry response and correlate that response
+  without prescribing periodic telemetry behavior.
+- **DLC:** exactly `1`.
+
+| Byte | Field | Encoding, units, and validity |
+| --- | --- | --- |
+| `0` | Request sequence | `1..255`; `0` is reserved for unsolicited status telemetry and is invalid in this command |
+
+Golden vector: OBC requesting ADCS status with sequence `42` is ID `0x230`,
+DLC `1`, data `2A`.
+
+### Telemetry index 0: node status
+
+- **ID:** `0x400 + source_node*0x10 + 0`.
+- **Sender / consumers:** every registered node sends its own status; the OBC
+  and diagnostic listeners consume it.
+- **Purpose:** answer a request-status command or provide an unsolicited basic
+  health snapshot. The transmission schedule is not defined here.
+- **DLC:** exactly `7`.
+
+| Byte(s) | Field | Encoding, units, and validity |
+| --- | --- | --- |
+| `0` | Request sequence | Echo `1..255` from the triggering request; `0` means unsolicited status |
+| `1` | Node state | Common node-state value above |
+| `2..5` | Uptime | Seconds since the node application started, unsigned 32-bit little-endian; wraps modulo `2^32` and has no invalid sentinel |
+| `6` | Active fault count | `0..254`; `0xFF` means unavailable |
+
+Golden vector: ADCS replying to sequence `42`, nominal after `86400` seconds,
+with no active faults is ID `0x430`, DLC `7`, data
+`2A 01 80 51 01 00 00`.
 
 ## C/Rust boundary
 
@@ -75,11 +179,15 @@ numeric tier values from the header, not an enum object across the ABI.
 Frame validation reports a bad ID or node before a bad DLC when both fail.
 The API is independent of FreeRTOS and any CAN controller.
 
-## Pending protocol definitions
+## Approval and remaining protocol definitions
 
-No command, error, telemetry, or heartbeat **payload** is specified by this
-foundation. The next approved message catalog must assign indexes, DLC,
-field byte order, units/scaling, invalid values, and golden wire vectors.
-Heartbeat timing, node states, timeout thresholds, retries, telemetry
-deadbands, and command authorization are also future protocol decisions.
-See `NEXT_STEPS.md` for the implementation sequence.
+Before this catalog is approved, the OBC, EPS, ADCS, COMMS, and THERMAL teams
+must confirm that these four messages are the minimum common set they need and
+that every field can be produced and consumed as written. Approval should be
+recorded in the catalog review; until then, deployed software must not rely on
+these payloads.
+
+Heartbeat period, timeout thresholds, state-transition policy, error response,
+command authentication/enforcement, telemetry schedules/deadbands, and retry
+behavior remain future protocol decisions. See `NEXT_STEPS.md` for the
+implementation sequence.

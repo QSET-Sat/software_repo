@@ -204,8 +204,9 @@ pub unsafe extern "C" fn qset_can_validate_frame(frame: *const CanFrame) -> i32 
     }
 }
 
-// The host static library has no Rust standard library. An embedded image may
-// replace this handler when a target toolchain and system fault policy exist.
+// Host builds link std's panic runtime. Firmware builds use this fallback.
+// Replace it here with a board-specific handler, or remove it before linking
+// another Rust panic handler, once the target fault policy is defined.
 #[cfg(all(not(test), not(feature = "host-std")))]
 #[panic_handler]
 fn panic(_: &PanicInfo<'_>) -> ! {
