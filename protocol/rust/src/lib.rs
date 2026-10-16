@@ -19,19 +19,23 @@ pub const REGISTERED_NODES: &[Node] = &[
     },
     Node {
         id: 0x2,
-        name: "EPS",
-    },
-    Node {
-        id: 0x3,
         name: "ADCS",
     },
     Node {
-        id: 0x4,
+        id: 0x3,
         name: "COMMS",
     },
     Node {
+        id: 0x4,
+        name: "PAYLOAD",
+    },
+    Node {
         id: 0x5,
-        name: "THERMAL",
+        name: "BATT",
+    },
+    Node {
+        id: 0x6,
+        name: "MPPT",
     },
 ];
 
