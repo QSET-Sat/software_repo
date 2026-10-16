@@ -278,7 +278,7 @@ mod tests {
             make_id(IdParts {
                 tier: Tier::Heartbeat,
                 node: 1,
-                index: 1
+                index: 20
             }),
             Err(Status::BadIndex)
         );
