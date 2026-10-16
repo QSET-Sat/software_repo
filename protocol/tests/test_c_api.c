@@ -4,7 +4,8 @@
 #include <stddef.h>
 #include <stdio.h>
 
-int main(void) {
+int main(void)
+{
     _Static_assert(sizeof(qset_can_frame_t) == 12, "C/Rust frame size changed");
     _Static_assert(offsetof(qset_can_frame_t, id) == 0, "id offset changed");
     _Static_assert(offsetof(qset_can_frame_t, dlc) == 2, "dlc offset changed");
@@ -32,7 +33,7 @@ int main(void) {
     id = 0xffff;
     assert(qset_can_make_id(QSET_CAN_TIER_HEARTBEAT, 1, 1, &id) == QSET_CAN_BAD_INDEX);
     assert(id == 0xffff);
-    assert(qset_can_make_id(QSET_CAN_TIER_COMMAND, 6, 0, &id) == QSET_CAN_BAD_NODE);
+    assert(qset_can_make_id(QSET_CAN_TIER_COMMAND, 7, 0, &id) == QSET_CAN_BAD_NODE);
     assert(id == 0xffff);
     assert(qset_can_make_id(99, 1, 0, &id) == QSET_CAN_BAD_TIER);
     assert(qset_can_make_id(QSET_CAN_TIER_COMMAND, 1, 0, NULL) == QSET_CAN_NULL_POINTER);

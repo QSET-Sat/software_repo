@@ -19,19 +19,23 @@ pub const REGISTERED_NODES: &[Node] = &[
     },
     Node {
         id: 0x2,
-        name: "EPS",
-    },
-    Node {
-        id: 0x3,
         name: "ADCS",
     },
     Node {
-        id: 0x4,
+        id: 0x3,
         name: "COMMS",
     },
     Node {
+        id: 0x4,
+        name: "PAYLOAD",
+    },
+    Node {
         id: 0x5,
-        name: "THERMAL",
+        name: "BATT",
+    },
+    Node {
+        id: 0x6,
+        name: "MPPT",
     },
 ];
 
@@ -267,7 +271,7 @@ mod tests {
     #[test]
     fn rejects_unassigned_and_reserved_ids() {
         for id in [
-            0x000, 0x010, 0x0ff, 0x100, 0x160, 0x260, 0x300, 0x3ff, 0x460, 0x500, 0x7ff, 0x800,
+            0x000, 0x010, 0x0ff, 0x100, 0x170, 0x270, 0x300, 0x3ff, 0x470, 0x500, 0x7ff, 0x800,
         ] {
             assert!(parse_id(id).is_err(), "accepted reserved ID {id:#x}");
         }

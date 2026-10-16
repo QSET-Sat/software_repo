@@ -25,15 +25,16 @@ defined QSET message.
 
 ## Node registry
 
-| Node ID | Assignment |
-| --- | --- |
-| `0x0` | Reserved; `0x000` is not an implemented broadcast message |
-| `0x1` | OBC |
-| `0x2` | EPS |
-| `0x3` | ADCS |
-| `0x4` | COMMS |
-| `0x5` | THERMAL |
-| `0x6..0xF` | Unassigned; rejected until added to the registry |
+| Node ID    | Assignment                                                |
+| ---------- | --------------------------------------------------------- |
+| `0x0`      | Reserved; `0x000` is not an implemented broadcast message |
+| `0x1`      | OBC                                                       |
+| `0x2`      | ADCS                                                      |
+| `0x3`      | COMMS                                                     |
+| `0x4`      | PAYLOAD                                                   |
+| `0x5`      | BATT                                                      |
+| `0x6`      | MPPT                                                      |
+| `0x7..0xF` | Unassigned; rejected until added to the registry          |
 
 The active table is `REGISTERED_NODES` in the Rust library. Add or change a
 node there, update this table, and rebuild all affected firmware. A registry
@@ -46,15 +47,15 @@ command, since command IDs name their destination.
 Lower numeric IDs have higher CAN arbitration priority. Within the current
 tiers, node ID occupies four bits and index occupies four bits where used.
 
-| Tier | Range | Formula | Node means | Index |
-| --- | --- | --- | --- | --- |
-| Heartbeat | `0x000..0x00F` | `node` | Source | Must be zero |
-| Error | `0x100..0x1FF` | `0x100 + node×0x10 + index` | Source | `0..15` |
-| Command | `0x200..0x2FF` | `0x200 + node×0x10 + index` | Destination | `0..15` |
-| Telemetry | `0x400..0x4FF` | `0x400 + node×0x10 + index` | Source | `0..15` |
+| Tier      | Range          | Formula                     | Node means  | Index        |
+| --------- | -------------- | --------------------------- | ----------- | ------------ |
+| Heartbeat | `0x000..0x00F` | `node`                      | Source      | Must be zero |
+| Error     | `0x100..0x1FF` | `0x100 + node×0x10 + index` | Source      | `0..15`      |
+| Command   | `0x200..0x2FF` | `0x200 + node×0x10 + index` | Destination | `0..15`      |
+| Telemetry | `0x400..0x4FF` | `0x400 + node×0x10 + index` | Source      | `0..15`      |
 
 The heartbeat tier has only one ID per node. For example, an ADCS telemetry
-frame with index `2` has ID `0x432`. The ranges `0x010..0x0FF`,
+frame with index `2` has ID `0x422`. The ranges `0x010..0x0FF`,
 `0x300..0x3FF`, and `0x500..0x7FF` are unassigned. Any ID with an
 unregistered node is rejected, even if it lies inside a tier range. The
 foundation parser accepts error, command, and telemetry indexes structurally.
@@ -78,22 +79,22 @@ rejected unless the field definition says otherwise.
 
 The heartbeat and status telemetry use the same one-byte node state:
 
-| Value | Meaning |
-| --- | --- |
-| `0x00` | Starting: initialization is not complete |
-| `0x01` | Nominal: normal application work is enabled |
-| `0x02` | Degraded: operating with a known loss of capability |
-| `0x03` | Safe: only functions allowed by the safe-state policy are enabled |
-| `0x04` | Stopping: an orderly shutdown or reset is in progress |
-| `0x05..0xFE` | Reserved; reject |
-| `0xFF` | Invalid or unavailable; reject |
+| Value        | Meaning                                                           |
+| ------------ | ----------------------------------------------------------------- |
+| `0x00`       | Starting: initialization is not complete                          |
+| `0x01`       | Nominal: normal application work is enabled                       |
+| `0x02`       | Degraded: operating with a known loss of capability               |
+| `0x03`       | Safe: only functions allowed by the safe-state policy are enabled |
+| `0x04`       | Stopping: an orderly shutdown or reset is in progress             |
+| `0x05..0xFE` | Reserved; reject                                                  |
+| `0xFF`       | Invalid or unavailable; reject                                    |
 
 This table defines the wire values, not the transitions, authority, or action
 associated with each state. Those service policies remain a separate review.
 
 ### Heartbeat: node heartbeat
 
-- **ID:** the registered source node ID (`0x001..0x005` currently); heartbeat
+- **ID:** the registered source node ID (`0x001..0x006` currently); heartbeat
   has no separate message index.
 - **Sender / consumers:** every registered node sends its own heartbeat; all
   nodes and diagnostic tools may consume it.
@@ -101,10 +102,10 @@ associated with each state. Those service policies remain a separate review.
   state without carrying node-specific telemetry.
 - **DLC:** exactly `2`.
 
-| Byte | Field | Encoding, units, and validity |
-| --- | --- | --- |
-| `0` | Protocol version | `0x01` for this catalog; `0x00` is invalid and `0x02..0xFF` are reserved until assigned |
-| `1` | Node state | Common node-state value above |
+| Byte | Field            | Encoding, units, and validity                                                           |
+| ---- | ---------------- | --------------------------------------------------------------------------------------- |
+| `0`  | Protocol version | `0x01` for this catalog; `0x00` is invalid and `0x02..0xFF` are reserved until assigned |
+| `1`  | Node state       | Common node-state value above                                                           |
 
 Golden vector: an EPS heartbeat in nominal state is ID `0x002`, DLC `2`, data
 `01 01`.
@@ -118,11 +119,11 @@ Golden vector: an EPS heartbeat in nominal state is ID `0x002`, DLC `2`, data
   subsystem-specific fault codes.
 - **DLC:** exactly `4`.
 
-| Byte(s) | Field | Encoding, units, and validity |
-| --- | --- | --- |
-| `0` | Reason | `0x01` unassigned message index; `0x02` wrong DLC; `0x03` invalid or reserved field value; `0x04` unauthorized sender; `0x00` and `0x05..0xFF` are reserved and rejected |
-| `1..2` | Offending arbitration ID | Unsigned 11-bit standard ID, little-endian; values above `0x07FF` are invalid |
-| `3` | Observed DLC | Raw DLC value `0..15`; `9..15` explicitly report a non-Classic-CAN length and `16..255` are invalid |
+| Byte(s) | Field                    | Encoding, units, and validity                                                                                                                                            |
+| ------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`     | Reason                   | `0x01` unassigned message index; `0x02` wrong DLC; `0x03` invalid or reserved field value; `0x04` unauthorized sender; `0x00` and `0x05..0xFF` are reserved and rejected |
+| `1..2`  | Offending arbitration ID | Unsigned 11-bit standard ID, little-endian; values above `0x07FF` are invalid                                                                                            |
+| `3`     | Observed DLC             | Raw DLC value `0..15`; `9..15` explicitly report a non-Classic-CAN length and `16..255` are invalid                                                                      |
 
 Golden vector: EPS reporting wrong DLC (`0x02`) for command ID `0x220` with
 observed DLC `9` is ID `0x120`, DLC `4`, data `02 20 02 09`.
@@ -136,11 +137,11 @@ observed DLC `9` is ID `0x120`, DLC `4`, data `02 20 02 09`.
   without prescribing periodic telemetry behavior.
 - **DLC:** exactly `1`.
 
-| Byte | Field | Encoding, units, and validity |
-| --- | --- | --- |
-| `0` | Request sequence | `1..255`; `0` is reserved for unsolicited status telemetry and is invalid in this command |
+| Byte | Field            | Encoding, units, and validity                                                             |
+| ---- | ---------------- | ----------------------------------------------------------------------------------------- |
+| `0`  | Request sequence | `1..255`; `0` is reserved for unsolicited status telemetry and is invalid in this command |
 
-Golden vector: OBC requesting ADCS status with sequence `42` is ID `0x230`,
+Golden vector: OBC requesting ADCS status with sequence `42` is ID `0x220`,
 DLC `1`, data `2A`.
 
 ### Telemetry index 0: node status
@@ -152,15 +153,15 @@ DLC `1`, data `2A`.
   health snapshot. The transmission schedule is not defined here.
 - **DLC:** exactly `7`.
 
-| Byte(s) | Field | Encoding, units, and validity |
-| --- | --- | --- |
-| `0` | Request sequence | Echo `1..255` from the triggering request; `0` means unsolicited status |
-| `1` | Node state | Common node-state value above |
-| `2..5` | Uptime | Seconds since the node application started, unsigned 32-bit little-endian; wraps modulo `2^32` and has no invalid sentinel |
-| `6` | Active fault count | `0..254`; `0xFF` means unavailable |
+| Byte(s) | Field              | Encoding, units, and validity                                                                                              |
+| ------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `0`     | Request sequence   | Echo `1..255` from the triggering request; `0` means unsolicited status                                                    |
+| `1`     | Node state         | Common node-state value above                                                                                              |
+| `2..5`  | Uptime             | Seconds since the node application started, unsigned 32-bit little-endian; wraps modulo `2^32` and has no invalid sentinel |
+| `6`     | Active fault count | `0..254`; `0xFF` means unavailable                                                                                         |
 
 Golden vector: ADCS replying to sequence `42`, nominal after `86400` seconds,
-with no active faults is ID `0x430`, DLC `7`, data
+with no active faults is ID `0x420`, DLC `7`, data
 `2A 01 80 51 01 00 00`.
 
 ## C/Rust boundary
