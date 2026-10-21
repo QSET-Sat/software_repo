@@ -41,4 +41,5 @@ panic/fault policy during board integration.
 - `protocol/include/qset_can.h`: C ABI contract
 - `protocol/tests/test_c_api.c`: linked C/Rust boundary test
 - `docs/FREERTOS_DESIGN.md`: planned C transport/task architecture
+- `docs/IMPLEMENTATION_DECISIONS.md`: approved implementation policy and deferred decisions
 - `NEXT_STEPS.md`: follow-on milestones and approval gates

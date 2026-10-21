@@ -3,10 +3,11 @@
 Status: **draft foundation**. This document is the source of truth for the
 rules implemented in this repository. It incorporates the July 2026 QSET
 Custom CAN Protocol draft, with the command and telemetry base constants
-corrected to match their stated ranges. The first message catalog below is a
-review candidate; it is not implemented or approved yet. Changes to IDs, node
-assignments, or approved payloads must update this document, code, and tests in
-the same review.
+corrected to match their stated ranges. The first message catalog below is the
+approved version 1 implementation baseline but is not implemented yet. Changes
+to IDs, node assignments, or approved payloads must update this document, code,
+and tests in the same review. Runtime policy and explicit deferrals are recorded
+in `docs/IMPLEMENTATION_DECISIONS.md`.
 
 ## Frame contract
 
@@ -62,12 +63,11 @@ foundation parser accepts error, command, and telemetry indexes structurally.
 The proposed catalog below assigns index `0` in each of those tiers; a future
 message decoder will reject all other indexes until they are assigned.
 
-## Proposed message catalog
+## Version 1 message catalog
 
-Status: **candidate for subteam review**. These definitions are complete
-enough to implement, but they do not become the production contract until the
-OBC and affected subsystem teams approve them. Issue 4 will add codecs only
-after that approval.
+Status: **approved implementation baseline**. These definitions are ready for
+the common message-codec implementation. Team review and hardware conformance
+testing remain release gates.
 
 Every catalog decoder must require the exact DLC shown below. Bytes outside
 the DLC are not part of the frame and remain ignored. All multi-byte integers
@@ -107,7 +107,7 @@ associated with each state. Those service policies remain a separate review.
 | `0`  | Protocol version | `0x01` for this catalog; `0x00` is invalid and `0x02..0xFF` are reserved until assigned |
 | `1`  | Node state       | Common node-state value above                                                           |
 
-Golden vector: an EPS heartbeat in nominal state is ID `0x002`, DLC `2`, data
+Golden vector: an ADCS heartbeat in nominal state is ID `0x002`, DLC `2`, data
 `01 01`.
 
 ### Error index 0: protocol violation
@@ -125,7 +125,7 @@ Golden vector: an EPS heartbeat in nominal state is ID `0x002`, DLC `2`, data
 | `1..2`  | Offending arbitration ID | Unsigned 11-bit standard ID, little-endian; values above `0x07FF` are invalid                                                                                            |
 | `3`     | Observed DLC             | Raw DLC value `0..15`; `9..15` explicitly report a non-Classic-CAN length and `16..255` are invalid                                                                      |
 
-Golden vector: EPS reporting wrong DLC (`0x02`) for command ID `0x220` with
+Golden vector: ADCS reporting wrong DLC (`0x02`) for command ID `0x220` with
 observed DLC `9` is ID `0x120`, DLC `4`, data `02 20 02 09`.
 
 ### Command index 0: request status
@@ -182,11 +182,9 @@ The API is independent of FreeRTOS and any CAN controller.
 
 ## Approval and remaining protocol definitions
 
-Before this catalog is approved, the OBC, EPS, ADCS, COMMS, and THERMAL teams
-must confirm that these four messages are the minimum common set they need and
-that every field can be produced and consumed as written. Approval should be
-recorded in the catalog review; until then, deployed software must not rely on
-these payloads.
+The four common messages are the approved version 1 implementation scope.
+OBC, ADCS, COMMS, PAYLOAD, BATT, and MPPT stakeholders must review the catalog
+and confirm that every field can be produced and consumed before flight release.
 
 Heartbeat period, timeout thresholds, state-transition policy, error response,
 command authentication/enforcement, telemetry schedules/deadbands, and retry
