@@ -1,5 +1,6 @@
 RUST_MANIFEST := protocol/rust/Cargo.toml
 RUST_STATICLIB := protocol/rust/target/release/libqset_can_protocol.a
+RUST_SOURCES := $(wildcard protocol/rust/src/*.rs)
 CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -O2
 
@@ -7,7 +8,7 @@ CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -O2
 
 all: $(RUST_STATICLIB)
 
-$(RUST_STATICLIB): protocol/rust/src/lib.rs protocol/rust/Cargo.toml
+$(RUST_STATICLIB): $(RUST_SOURCES) protocol/rust/Cargo.toml
 	cargo build --release --manifest-path $(RUST_MANIFEST)
 
 build/test_c_api: protocol/tests/test_c_api.c protocol/include/qset_can.h $(RUST_STATICLIB)

@@ -25,7 +25,8 @@ typedef enum {
     QSET_CAN_BAD_NODE = -3,
     QSET_CAN_BAD_INDEX = -4,
     QSET_CAN_BAD_ID = -5,
-    QSET_CAN_BAD_DLC = -6
+    QSET_CAN_BAD_DLC = -6,
+    QSET_CAN_BAD_VALUE = -7
 } qset_can_status_t;
 
 /* Standard 11-bit Classic CAN data frame. The first dlc bytes are on wire;

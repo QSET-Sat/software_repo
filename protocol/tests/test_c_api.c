@@ -10,6 +10,7 @@ int main(void)
     _Static_assert(offsetof(qset_can_frame_t, id) == 0, "id offset changed");
     _Static_assert(offsetof(qset_can_frame_t, dlc) == 2, "dlc offset changed");
     _Static_assert(offsetof(qset_can_frame_t, data) == 3, "data offset changed");
+    _Static_assert(QSET_CAN_BAD_VALUE == -7, "payload-value status changed");
 
     uint16_t id = 0xffff;
     uint8_t tier = 0xff, node = 0xff, index = 0xff;
