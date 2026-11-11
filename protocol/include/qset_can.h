@@ -29,6 +29,17 @@ typedef enum {
     QSET_CAN_BAD_VALUE = -7
 } qset_can_status_t;
 
+/* Registered node IDs. Must match the NODE_* constants and REGISTERED_NODES
+ * in protocol/rust/src/common.rs and the node table in protocol/SPEC.md. */
+typedef enum {
+    QSET_CAN_NODE_OBC = 0x1,
+    QSET_CAN_NODE_ADCS = 0x2,
+    QSET_CAN_NODE_COMMS = 0x3,
+    QSET_CAN_NODE_PAYLOAD = 0x4,
+    QSET_CAN_NODE_BATT = 0x5,
+    QSET_CAN_NODE_MPPT = 0x6
+} qset_can_node_t;
+
 /* Standard 11-bit Classic CAN data frame. The first dlc bytes are on wire;
  * data[dlc..8] is ignored on receive. Hardware-specific flags stay in C. */
 typedef struct {

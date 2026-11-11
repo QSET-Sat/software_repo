@@ -3,31 +3,50 @@
 pub const MAX_DLC: u8 = 8;
 pub const MAX_STANDARD_ID: u16 = 0x7ff;
 
-/// Edit this registry when a node is assigned. Every active node must have a
-/// distinct ID in 1..=15. ID zero remains reserved.
+// Node IDs: the only place node numbers are written in Rust.
+// Each ID must be distinct and within 1..=15. ID zero remains reserved.
+// Each constant here must have a matching entry in `REGISTERED_NODES` below.
+// Values must match `QSET_CAN_NODE_*` in `protocol/include/qset_can.h`
+// and the node registry table in `protocol/SPEC.md`.
+pub const NODE_OBC: u8 = 0x1;
+pub const NODE_ADCS: u8 = 0x2;
+pub const NODE_COMMS: u8 = 0x3;
+pub const NODE_PAYLOAD: u8 = 0x4;
+pub const NODE_BATT: u8 = 0x5;
+pub const NODE_MPPT: u8 = 0x6;
+
+/// Every active node, used to validate received frames. Entries use the
+/// `NODE_*` constants above, never raw numbers.
+///
+/// To assign a new node, update all of these in the same review:
+/// 1. Add a `NODE_*` constant above.
+/// 2. Add an entry here using that constant.
+/// 3. Add the matching `QSET_CAN_NODE_*` value in `protocol/include/qset_can.h`.
+/// 4. Update the node registry table in `protocol/SPEC.md`.
+/// 5. Update the Rust and C tests.
 pub const REGISTERED_NODES: &[Node] = &[
     Node {
-        id: 0x1,
+        id: NODE_OBC,
         name: "OBC",
     },
     Node {
-        id: 0x2,
+        id: NODE_ADCS,
         name: "ADCS",
     },
     Node {
-        id: 0x3,
+        id: NODE_COMMS,
         name: "COMMS",
     },
     Node {
-        id: 0x4,
+        id: NODE_PAYLOAD,
         name: "PAYLOAD",
     },
     Node {
-        id: 0x5,
+        id: NODE_BATT,
         name: "BATT",
     },
     Node {
-        id: 0x6,
+        id: NODE_MPPT,
         name: "MPPT",
     },
 ];

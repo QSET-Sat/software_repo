@@ -37,10 +37,21 @@ defined QSET message.
 | `0x6`      | MPPT                                                      |
 | `0x7..0xF` | Unassigned; rejected until added to the registry          |
 
-The active table is `REGISTERED_NODES` in the Rust library. Add or change a
-node there, update this table, and rebuild all affected firmware. A registry
-update must keep IDs unique and within `0x1..0xF`. The OBC is the master that
-issues commands. The CAN ID format alone cannot prove which node sent a
+Each node ID is defined once per language: as a `NODE_*` constant in
+`protocol/rust/src/common.rs` and as a `QSET_CAN_NODE_*` value in
+`protocol/include/qset_can.h`. The active table is `REGISTERED_NODES` in
+`common.rs`, which uses the `NODE_*` constants. To add or change a node,
+update all of the following in the same review, then rebuild all affected
+firmware:
+
+1. The `NODE_*` constant in `common.rs`.
+2. The `REGISTERED_NODES` entry in `common.rs`.
+3. The `QSET_CAN_NODE_*` value in `qset_can.h`.
+4. The table above.
+5. The Rust and C tests.
+
+A registry update must keep IDs unique and within `0x1..0xF`. The OBC is the
+master that issues commands. The CAN ID format alone cannot prove which node sent a
 command, since command IDs name their destination.
 
 ## Arbitration ID layout
