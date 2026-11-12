@@ -47,8 +47,9 @@ firmware:
 1. The `NODE_*` constant in `common.rs`.
 2. The `REGISTERED_NODES` entry in `common.rs`.
 3. The `QSET_CAN_NODE_*` value in `qset_can.h`.
-4. The table above.
-5. The Rust and C tests.
+4. The registered-node check in `protocol/include/qset_local_node.h`.
+5. The table above.
+6. The Rust and C tests.
 
 A registry update must keep IDs unique and within `0x1..0xF`. The OBC is the
 master that issues commands. The CAN ID format alone cannot prove which node sent a

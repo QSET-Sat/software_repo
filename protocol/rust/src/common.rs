@@ -22,8 +22,9 @@ pub const NODE_MPPT: u8 = 0x6;
 /// 1. Add a `NODE_*` constant above.
 /// 2. Add an entry here using that constant.
 /// 3. Add the matching `QSET_CAN_NODE_*` value in `protocol/include/qset_can.h`.
-/// 4. Update the node registry table in `protocol/SPEC.md`.
-/// 5. Update the Rust and C tests.
+/// 4. Add it to the registered-node check in `protocol/include/qset_local_node.h`.
+/// 5. Update the node registry table in `protocol/SPEC.md`.
+/// 6. Update the Rust and C tests.
 pub const REGISTERED_NODES: &[Node] = &[
     Node {
         id: NODE_OBC,
