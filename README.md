@@ -13,7 +13,11 @@ sensor message is not a QSET production message.
   IDs and DLCs.
 - A small C API exposes those functions for future FreeRTOS firmware. No
   FreeRTOS kernel or board driver is needed for host testing.
-- Rust unit tests and a linked C integration test run with `make test`.
+- Each firmware target selects its node ID at build time with
+  `make node-config NODE=<name>`. See
+  [Local node selection](protocol/SPEC.md#local-node-selection).
+- Rust unit tests, a linked C integration test, and node-configuration tests
+  run with `make test`.
 
 Rust owns application-protocol decisions. C will own the FreeRTOS tasks,
 queues, CAN driver, and ISR handoff when hardware is selected. See the
@@ -39,7 +43,9 @@ panic/fault policy during board integration.
 - `protocol/SPEC.md`: authoritative implemented protocol rules and pending decisions
 - `protocol/rust`: Rust core and unit tests
 - `protocol/include/qset_can.h`: C ABI contract
+- `protocol/include/qset_local_node.h`: local node identity and its build-time checks
 - `protocol/tests/test_c_api.c`: linked C/Rust boundary test
+- `protocol/tests/test_node_config.c`: host test built once per node configuration
 - `docs/FREERTOS_DESIGN.md`: planned C transport/task architecture
 - `docs/IMPLEMENTATION_DECISIONS.md`: approved implementation policy and deferred decisions
 - `NEXT_STEPS.md`: follow-on milestones and approval gates

@@ -16,7 +16,8 @@ pub mod request_status;
 // Keep the original crate-root Rust API source-compatible.
 pub use common::{
     make_id, parse_id, validate_frame, CanFrame, IdParts, Node, Status, Tier, MAX_DLC,
-    MAX_STANDARD_ID, REGISTERED_NODES,
+    MAX_STANDARD_ID, NODE_ADCS, NODE_BATT, NODE_COMMS, NODE_MPPT, NODE_OBC, NODE_PAYLOAD,
+    REGISTERED_NODES,
 };
 
 /// The output is written only on success. Non-null pointers must reference
@@ -145,7 +146,7 @@ mod tests {
         assert_eq!(
             make_id(IdParts {
                 tier: Tier::Telemetry,
-                node: 3,
+                node: NODE_COMMS,
                 index: 2
             }),
             Ok(0x432)
@@ -162,7 +163,7 @@ mod tests {
         assert_eq!(
             make_id(IdParts {
                 tier: Tier::Heartbeat,
-                node: 1,
+                node: NODE_OBC,
                 index: 20
             }),
             Err(Status::BadIndex)
@@ -170,7 +171,7 @@ mod tests {
         assert_eq!(
             make_id(IdParts {
                 tier: Tier::Error,
-                node: 0,
+                node: 0, // reserved: never a registered node
                 index: 0
             }),
             Err(Status::BadNode)
@@ -178,7 +179,7 @@ mod tests {
         assert_eq!(
             make_id(IdParts {
                 tier: Tier::Command,
-                node: 1,
+                node: NODE_OBC,
                 index: 16
             }),
             Err(Status::BadIndex)
