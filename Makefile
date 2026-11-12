@@ -10,7 +10,7 @@ CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -O2
 NODES := OBC ADCS COMMS PAYLOAD BATT MPPT
 NODE_CONFIG := build/node/$(NODE)/qset_node_config.h
 
-.PHONY: all test rust-test rust-check-no-std c-test node-config clean
+.PHONY: all test rust-test rust-check-no-std c-test node-config node-test node-test-reject clean
 
 all: $(RUST_STATICLIB)
 
@@ -52,7 +52,71 @@ rust-check-no-std:
 c-test: build/test_c_api
 	./build/test_c_api
 
-test: rust-test rust-check-no-std c-test
+# Node configuration tests (run by make test):
+#   Tests 1-6  (node-test):        OBC, ADCS, COMMS, PAYLOAD, BATT, MPPT each
+#                                  generate, build and run test_node_config.c.
+#   Test 7     (node-test-reject): missing NODE is rejected by the Makefile.
+#   Test 8     (node-test-reject): unknown NODE is rejected by the Makefile.
+#   Test 9     (node-test-reject): unassigned ID 7 is rejected by qset_local_node.h.
+#   Test 10    (node-test-reject): missing ID is rejected by qset_local_node.h.
+
+# Tests 1-6, positive: every registered node configuration generates, builds
+# and runs, one loop pass per node in NODES. NODE is always passed explicitly
+# so a NODE given to `make test` cannot leak into these sub-makes.
+node-test: $(RUST_STATICLIB)
+	@for n in $(NODES); do \
+	    $(MAKE) -s node-config NODE=$$n || exit 1; \
+	    $(CC) $(CFLAGS) -Iprotocol/include -Ibuild/node/$$n protocol/tests/test_node_config.c \
+	        $(RUST_STATICLIB) -o build/node/$$n/test_node_config || exit 1; \
+	    ./build/node/$$n/test_node_config || exit 1; \
+	done
+
+# Tests 7-10, negative: each invalid configuration must fail to build. A test fails
+# only if its bad input is accepted. The two bad config headers are written
+# fresh on every run, because make node-config refuses to generate them.
+BAD_NODE_CONFIG := build/bad_node_config
+node-test-reject:
+# Setup: write the two bad config headers used by tests 9 and 10.
+	@mkdir -p $(BAD_NODE_CONFIG)/unassigned $(BAD_NODE_CONFIG)/missing_id
+	@printf '%s\n' \
+	  '/* Deliberately invalid: 7 is an unassigned node. */' \
+	  '#ifndef QSET_NODE_CONFIG_H' \
+	  '#define QSET_NODE_CONFIG_H' \
+	  '#include "qset_can.h"' \
+	  '#define QSET_LOCAL_NODE_NAME "UNASSIGNED"' \
+	  '#define QSET_LOCAL_NODE_ID 7' \
+	  '#endif' > $(BAD_NODE_CONFIG)/unassigned/qset_node_config.h
+	@printf '%s\n' \
+	  '/* Deliberately invalid: QSET_LOCAL_NODE_ID is not defined. */' \
+	  '#ifndef QSET_NODE_CONFIG_H' \
+	  '#define QSET_NODE_CONFIG_H' \
+	  '#include "qset_can.h"' \
+	  '#define QSET_LOCAL_NODE_NAME "MISSING_ID"' \
+	  '#endif' > $(BAD_NODE_CONFIG)/missing_id/qset_node_config.h
+# Test 7: no NODE given. The Makefile must refuse.
+	@if $(MAKE) -s node-config NODE= >/dev/null 2>&1; then \
+	    echo "FAILED  missing NODE: was accepted"; exit 1; \
+	fi
+	@echo "PASSED  missing NODE: rejected as expected"
+# Test 8: NODE is not one of NODES. The Makefile must refuse.
+	@if $(MAKE) -s node-config NODE=BANANA >/dev/null 2>&1; then \
+	    echo "FAILED  unknown NODE: was accepted"; exit 1; \
+	fi
+	@echo "PASSED  unknown NODE: rejected as expected"
+# Test 9: ID 7 is not a registered node. qset_local_node.h must refuse.
+	@if $(CC) $(CFLAGS) -fsyntax-only -Iprotocol/include -I$(BAD_NODE_CONFIG)/unassigned \
+	        protocol/tests/test_node_config.c >/dev/null 2>&1; then \
+	    echo "FAILED  unassigned ID: was accepted"; exit 1; \
+	fi
+	@echo "PASSED  unassigned ID: rejected as expected"
+# Test 10: config has no QSET_LOCAL_NODE_ID. qset_local_node.h must refuse.
+	@if $(CC) $(CFLAGS) -fsyntax-only -Iprotocol/include -I$(BAD_NODE_CONFIG)/missing_id \
+	        protocol/tests/test_node_config.c >/dev/null 2>&1; then \
+	    echo "FAILED  missing ID: was accepted"; exit 1; \
+	fi
+	@echo "PASSED  missing ID: rejected as expected"
+
+test: rust-test rust-check-no-std c-test node-test node-test-reject
 
 clean:
 	cargo clean --manifest-path $(RUST_MANIFEST)
