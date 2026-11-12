@@ -5,7 +5,7 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -O2
 
 # Firmware targets select their node at build time: make node-config NODE=<name>
-# where <name> is one of NODES below (e.g. NODE=ADCS). 
+# where <name> is one of NODES below (e.g. NODE=ADCS).
 # Names must match the QSET_CAN_NODE_* values in protocol/include/qset_can.h.
 NODES := OBC ADCS COMMS PAYLOAD BATT MPPT
 NODE_CONFIG := build/node/$(NODE)/qset_node_config.h

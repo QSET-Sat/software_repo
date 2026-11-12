@@ -55,6 +55,55 @@ A registry update must keep IDs unique and within `0x1..0xF`. The OBC is the
 master that issues commands. The CAN ID format alone cannot prove which node sent a
 command, since command IDs name their destination.
 
+## Local node selection
+
+Each firmware target is built for exactly one node. Its node ID is fixed at
+build time and cannot change at runtime. The full registry above stays in every
+build, so received frames from all registered nodes are still validated.
+
+To set up a new firmware target:
+
+1. Generate its node configuration, where `<name>` is one of `OBC`, `ADCS`,
+   `COMMS`, `PAYLOAD`, `BATT`, or `MPPT`:
+
+   ```sh
+   make node-config NODE=<name>
+   ```
+
+   This writes `build/node/<name>/qset_node_config.h`, which defines
+   `QSET_LOCAL_NODE_ID` (for example `QSET_CAN_NODE_ADCS`) and
+   `QSET_LOCAL_NODE_NAME` (for example `"ADCS"`). Do not edit or commit it;
+   `make` regenerates it.
+2. Compile the target with both include folders:
+
+   ```sh
+   -Iprotocol/include -Ibuild/node/<name>
+   ```
+
+3. In firmware, include `qset_local_node.h`, never `qset_node_config.h`
+   directly. `qset_local_node.h` checks the generated configuration.
+4. Add a one-line check to the board's own code so it cannot be built against
+   another node's folder, for example in ADCS firmware:
+
+   ```c
+   _Static_assert(QSET_LOCAL_NODE_ID == QSET_CAN_NODE_ADCS,
+                  "ADCS firmware built with the wrong node config");
+   ```
+
+5. Use `QSET_LOCAL_NODE_ID` wherever the node's own ID is needed, such as the
+   source of its heartbeat. Never write the node number directly.
+
+The build fails if:
+
+- `NODE` is missing, unknown, or more than one name (`make node-config`).
+- The configuration header is not found (no `-Ibuild/node/<name>`).
+- `QSET_LOCAL_NODE_ID` is not defined, or is not a registered node
+  (`qset_local_node.h`).
+- The board's own `_Static_assert` does not match (step 4).
+
+`make test` builds and runs a host test for all six node configurations and
+confirms that missing, unknown, and unassigned IDs are rejected.
+
 ## Arbitration ID layout
 
 Lower numeric IDs have higher CAN arbitration priority. Within the current
