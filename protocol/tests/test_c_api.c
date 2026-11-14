@@ -15,12 +15,12 @@ int main(void)
     uint16_t id = 0xffff;
     uint8_t tier = 0xff, node = 0xff, index = 0xff;
 
-    assert(qset_can_make_id(QSET_CAN_TIER_HEARTBEAT, 1, 0, &id) == QSET_CAN_OK && id == 0x001);
-    assert(qset_can_make_id(QSET_CAN_TIER_ERROR, 2, 15, &id) == QSET_CAN_OK && id == 0x12f);
-    assert(qset_can_make_id(QSET_CAN_TIER_COMMAND, 3, 0, &id) == QSET_CAN_OK && id == 0x230);
-    assert(qset_can_make_id(QSET_CAN_TIER_TELEMETRY, 3, 2, &id) == QSET_CAN_OK && id == 0x432);
+    assert(qset_can_make_id(QSET_CAN_TIER_HEARTBEAT, QSET_CAN_NODE_OBC, 0, &id) == QSET_CAN_OK && id == 0x001);
+    assert(qset_can_make_id(QSET_CAN_TIER_ERROR, QSET_CAN_NODE_ADCS, 15, &id) == QSET_CAN_OK && id == 0x12f);
+    assert(qset_can_make_id(QSET_CAN_TIER_COMMAND, QSET_CAN_NODE_COMMS, 0, &id) == QSET_CAN_OK && id == 0x230);
+    assert(qset_can_make_id(QSET_CAN_TIER_TELEMETRY, QSET_CAN_NODE_COMMS, 2, &id) == QSET_CAN_OK && id == 0x432);
     assert(qset_can_parse_id(id, &tier, &node, &index) == QSET_CAN_OK);
-    assert(tier == QSET_CAN_TIER_TELEMETRY && node == 3 && index == 2);
+    assert(tier == QSET_CAN_TIER_TELEMETRY && node == QSET_CAN_NODE_COMMS && index == 2);
 
     qset_can_frame_t frame = {.id = 0x432, .dlc = 8, .data = {0}};
     assert(qset_can_validate_frame(&frame) == QSET_CAN_OK);
@@ -32,12 +32,13 @@ int main(void)
     assert(qset_can_validate_frame(&frame) == QSET_CAN_BAD_ID);
 
     id = 0xffff;
-    assert(qset_can_make_id(QSET_CAN_TIER_HEARTBEAT, 1, 1, &id) == QSET_CAN_BAD_INDEX);
+    assert(qset_can_make_id(QSET_CAN_TIER_HEARTBEAT, QSET_CAN_NODE_OBC, 1, &id) == QSET_CAN_BAD_INDEX);
     assert(id == 0xffff);
+    /* 7 is unassigned: never a registered node. */
     assert(qset_can_make_id(QSET_CAN_TIER_COMMAND, 7, 0, &id) == QSET_CAN_BAD_NODE);
     assert(id == 0xffff);
-    assert(qset_can_make_id(99, 1, 0, &id) == QSET_CAN_BAD_TIER);
-    assert(qset_can_make_id(QSET_CAN_TIER_COMMAND, 1, 0, NULL) == QSET_CAN_NULL_POINTER);
+    assert(qset_can_make_id(99, QSET_CAN_NODE_OBC, 0, &id) == QSET_CAN_BAD_TIER);
+    assert(qset_can_make_id(QSET_CAN_TIER_COMMAND, QSET_CAN_NODE_OBC, 0, NULL) == QSET_CAN_NULL_POINTER);
 
     tier = node = index = 0xff;
     assert(qset_can_parse_id(0x000, &tier, &node, &index) == QSET_CAN_BAD_NODE);
