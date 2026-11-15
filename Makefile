@@ -3,6 +3,7 @@ RUST_STATICLIB := protocol/rust/target/release/libqset_can_protocol.a
 RUST_SOURCES := $(wildcard protocol/rust/src/*.rs)
 CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -O2
+TRANSPORT_SOURCES := protocol/src/qset_can_transport.c protocol/src/qset_can_mock.c
 
 # Firmware targets select their node at build time: make node-config NODE=<name>
 # where <name> is one of NODES below (e.g. NODE=ADCS).
@@ -10,7 +11,7 @@ CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -O2
 NODES := OBC ADCS COMMS PAYLOAD BATT MPPT
 NODE_CONFIG := build/node/$(NODE)/qset_node_config.h
 
-.PHONY: all test rust-test rust-check-no-std c-test node-config node-test node-test-reject clean
+.PHONY: all test rust-test rust-check-no-std c-test transport-test node-config node-test node-test-reject clean
 
 all: $(RUST_STATICLIB)
 
@@ -51,6 +52,16 @@ rust-check-no-std:
 
 c-test: build/test_c_api
 	./build/test_c_api
+
+build/test_can_transport: protocol/tests/test_can_transport.c $(TRANSPORT_SOURCES) \
+                          protocol/include/qset_can_transport.h \
+                          protocol/include/qset_can_mock.h protocol/include/qset_can.h
+	mkdir -p build
+	$(CC) $(CFLAGS) -Iprotocol/include protocol/tests/test_can_transport.c \
+	    $(TRANSPORT_SOURCES) -o $@
+
+transport-test: build/test_can_transport
+	./build/test_can_transport
 
 # Node configuration tests (run by make test):
 #   Tests 1-6  (node-test):        OBC, ADCS, COMMS, PAYLOAD, BATT, MPPT each
@@ -116,7 +127,7 @@ node-test-reject:
 	fi
 	@echo "PASSED  missing ID: rejected as expected"
 
-test: rust-test rust-check-no-std c-test node-test node-test-reject
+test: rust-test rust-check-no-std c-test transport-test node-test node-test-reject
 
 clean:
 	cargo clean --manifest-path $(RUST_MANIFEST)

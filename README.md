@@ -13,15 +13,21 @@ sensor message is not a QSET production message.
   IDs and DLCs.
 - A small C API exposes those functions for future FreeRTOS firmware. No
   FreeRTOS kernel or board driver is needed for host testing.
+- A portable, nonblocking C transport API defines controller lifecycle, raw
+  RX/TX, primary/backup channel identity, controller state, normalized driver
+  faults, receive timestamps, and asynchronous bus-off recovery.
+- An allocation-free mock controller provides deterministic FIFO loopback,
+  manual timestamps, and fault/recovery injection for host tests.
 - Each firmware target selects its node ID at build time with
   `make node-config NODE=<name>`. See
   [Local node selection](protocol/SPEC.md#local-node-selection).
-- Rust unit tests, a linked C integration test, and node-configuration tests
-  run with `make test`.
+- Rust unit tests, linked C integration tests, the standalone transport test,
+  and node-configuration tests run with `make test`.
 
-Rust owns application-protocol decisions. C will own the FreeRTOS tasks,
-queues, CAN driver, and ISR handoff when hardware is selected. See the
-[FreeRTOS design](docs/FREERTOS_DESIGN.md) and [next steps](NEXT_STEPS.md).
+Rust owns application-protocol decisions. C owns the portable transport and
+will also own the FreeRTOS tasks, queues, hardware driver, and ISR handoff when
+hardware is selected. See the [FreeRTOS design](docs/FREERTOS_DESIGN.md) and
+[next steps](NEXT_STEPS.md).
 
 ## Build and test
 
@@ -44,8 +50,12 @@ panic/fault policy during board integration.
 - `protocol/rust`: Rust core and unit tests
 - `protocol/include/qset_can.h`: C ABI contract
 - `protocol/include/qset_local_node.h`: local node identity and its build-time checks
+- `protocol/include/qset_can_transport.h`: portable C controller contract
+- `protocol/include/qset_can_mock.h`: host mock interface and static storage
+- `protocol/src`: portable transport wrapper and mock implementation
 - `protocol/tests/test_c_api.c`: linked C/Rust boundary test
+- `protocol/tests/test_can_transport.c`: standalone C transport/mock test
 - `protocol/tests/test_node_config.c`: host test built once per node configuration
-- `docs/FREERTOS_DESIGN.md`: planned C transport/task architecture
+- `docs/FREERTOS_DESIGN.md`: implemented C boundary and planned RTOS integration
 - `docs/IMPLEMENTATION_DECISIONS.md`: approved implementation policy and deferred decisions
 - `NEXT_STEPS.md`: follow-on milestones and approval gates
