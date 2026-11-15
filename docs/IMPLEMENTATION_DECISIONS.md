@@ -191,6 +191,11 @@ protocol encoding -> C TX queue -> C TX task -> CAN controller
 ```
 
 - C owns the hardware driver, ISR, FreeRTOS queues/tasks, and bus selection.
+- The portable C controller interface is allocation-free and nonblocking. One
+  controller instance is bound to one primary or backup channel; vendor drivers
+  implement its operations table and map native failures to portable faults.
+- Receive metadata contains the C-only channel and a 64-bit monotonic
+  microsecond timestamp. Its epoch is adapter-defined and zero is valid.
 - Rust owns protocol IDs, validation, and codecs on supported targets.
 - Rust does not call FreeRTOS, access hardware, allocate memory, or block.
 - C preserves frame ID, DLC, and transmitted payload bytes exactly.
