@@ -1,8 +1,27 @@
-# Planned C/FreeRTOS transport architecture
+# C transport and planned FreeRTOS architecture
 
-This is a design for the board integration milestone, not compiled firmware.
-The MCU, controller, vendor SDK, task sizes/priorities, queue depths, and
-interrupt rules will be fixed after board selection.
+The hardware-independent controller contract and host mock are implemented and
+compiled by `make test`. The board/FreeRTOS integration remains a design for a
+later milestone. The MCU, controller, vendor SDK, task sizes/priorities, queue
+depths, and interrupt rules will be fixed after board selection.
+
+## Implemented portable boundary
+
+- `qset_can_transport.h` defines allocation-free controller instances bound to
+  either the primary or backup bus. It exposes nonblocking initialization,
+  start/stop, raw RX/TX, controller-state and latest-fault queries, and an
+  asynchronous bus-off recovery request.
+- Receive items wrap `qset_can_frame_t` with C-only bus-channel and monotonic
+  microsecond metadata. The frame type and Rust ABI remain unchanged.
+- Vendor adapters implement a required operations table and translate their
+  native errors to portable results and faults. Vendor, RTOS, and hardware
+  types are not permitted in the portable headers.
+- The transport checks only standard Classic CAN shape. Protocol ID assignment
+  and payload validation remain Rust responsibilities.
+- `qset_can_mock.h` supplies a deterministic 16-frame FIFO loopback adapter for
+  host tests. It does not model RTOS scheduling or physical-bus timing.
+- Calls are serialized by their owner. A future RX/TX task or ISR handoff owns
+  synchronization; the portable wrapper and mock contain no locks.
 
 ## Ownership and data flow
 
@@ -12,9 +31,10 @@ CAN controller → C ISR → C RX queue → C RX task → Rust frame validation
 future Rust encoder → C TX request → C TX queue → C TX task → CAN controller
 ```
 
-- **C platform adapter:** configure the controller and transceiver, receive
-  and transmit raw standard data frames, map hardware errors, and filter RTR,
-  extended, and controller error events before protocol validation.
+- **C platform adapter:** implement the portable operations table, configure
+  the controller and transceiver, receive and transmit raw standard data
+  frames, map hardware errors, and filter RTR, extended, and controller error
+  events before protocol validation.
 - **C/FreeRTOS layer:** use `xQueueSendFromISR` to hand complete received
   frames to an RX task and request a context switch when required. Keep ISR
   work bounded. TX requests enter a bounded queue; a TX task owns controller
