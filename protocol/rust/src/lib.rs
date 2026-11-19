@@ -8,6 +8,7 @@ extern crate std;
 use core::panic::PanicInfo;
 
 pub mod common;
+pub mod ffi;
 pub mod heartbeat;
 pub mod node_status;
 pub mod protocol_violation;

@@ -4,7 +4,7 @@ Status: **draft foundation**. This document is the source of truth for the
 rules implemented in this repository. It incorporates the July 2026 QSET
 Custom CAN Protocol draft, with the command and telemetry base constants
 corrected to match their stated ranges. The first message catalog below is the
-approved version 1 implementation baseline but is not implemented yet. Changes
+approved version 1 implementation baseline. Changes
 to IDs, node assignments, or approved payloads must update this document, code,
 and tests in the same review. Runtime policy and explicit deferrals are recorded
 in `docs/IMPLEMENTATION_DECISIONS.md`.
@@ -233,12 +233,20 @@ exports:
 - `qset_can_make_id(tier, node, index, out_id)`
 - `qset_can_parse_id(id, out_tier, out_node, out_index)`
 - `qset_can_validate_frame(frame)`
+- `qset_can_encode_<message>(message, out_frame)` and
+  `qset_can_decode_<message>(frame, out_message)` for `heartbeat`,
+  `protocol_violation`, `request_status`, and `node_status`.
 
 All return `0` on success or a negative `QSET_CAN_*` status. Null pointers
 return `QSET_CAN_NULL_POINTER`; other non-null pointers must address valid,
 aligned objects. Output parameters remain unchanged on failure. C passes
 numeric tier values from the header, not an enum object across the ABI.
 Frame validation reports a bad ID or node before a bad DLC when both fail.
+Message-specific decoders require the assigned tier, index, exact DLC, and
+valid payload values. The C message structures use raw fixed-width fields;
+node states and violation reasons have named `QSET_CAN_*` constants, and
+node-status `active_faults` uses `0xFF` for unavailable. Invalid payload values
+return `QSET_CAN_BAD_VALUE` (`-7`).
 The API is independent of FreeRTOS and any CAN controller.
 
 ## Approval and remaining protocol definitions
