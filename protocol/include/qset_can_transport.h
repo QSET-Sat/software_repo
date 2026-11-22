@@ -91,12 +91,15 @@ typedef struct {
     uint32_t rx_controller_overruns;
     /* Received frames dropped because the RX queue was full. One per frame. */
     uint32_t rx_queue_overflows;
+    /* Send requests refused because the TX queue was full. One per refusal. */
+    uint32_t tx_queue_full_failures;
 } qset_can_diagnostics_t;
 
 /* Statically allocate and zero-initialize this handle before calling init.
  * Callers serialize all access; the transport does not provide locking. The
  * exception is qset_can_controller_record_rx_queue_overflow, which is safe to
- * call from the ISR that feeds the RX queue. */
+ * call from the ISR that feeds the RX queue. The TX queue calls
+ * qset_can_controller_record_tx_queue_full inside its own serialization. */
 typedef struct {
     const qset_can_driver_ops_t *ops;
     void *driver_context;
@@ -139,6 +142,15 @@ qset_can_driver_result_t qset_can_controller_get_diagnostics(
  * already queued frames are kept, and this is called once for that frame.
  * Nonblocking and ISR-safe. Valid before init; the counter saturates. */
 qset_can_driver_result_t qset_can_controller_record_rx_queue_overflow(
+    qset_can_controller_t *controller);
+/* Called by the TX queue enqueue when the queue is full: the frame is refused,
+ * the caller gets an immediate error, and this is called once for that
+ * refusal. Several tasks may send, so the TX queue must call this while it
+ * holds the same lock or critical section it uses to check for full; the
+ * increment is not atomic on its own. Do not call it when the TX task finds
+ * the controller busy, because that is a normal wait, not a refused send.
+ * Nonblocking. Valid before init; the counter saturates. */
+qset_can_driver_result_t qset_can_controller_record_tx_queue_full(
     qset_can_controller_t *controller);
 
 #ifdef __cplusplus

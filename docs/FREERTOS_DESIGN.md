@@ -21,6 +21,13 @@ depths, and interrupt rules will be fixed after board selection.
   yet; when it is, its push must drop the new frame when the queue is full and
   call `qset_can_controller_record_rx_queue_overflow` once for that frame. The
   call is nonblocking and ISR-safe, and `rx_queue_overflows` saturates.
+- TX queue-full failures are counted by the transport. The TX queue is not
+  built yet; when it is, its enqueue must refuse the frame when the queue is
+  full, return an immediate error to the caller, and call
+  `qset_can_controller_record_tx_queue_full` once for that refusal. Several
+  tasks may send, so the call must be made inside the same lock or critical
+  section the queue uses to check for full. A busy controller seen by the TX
+  task is a normal wait and is not counted.
 - Receive items wrap `qset_can_frame_t` with C-only bus-channel and monotonic
   microsecond metadata. The frame type and Rust ABI remain unchanged.
 - Vendor adapters implement a required operations table and translate their
