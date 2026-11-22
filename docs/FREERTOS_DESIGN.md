@@ -9,8 +9,14 @@ depths, and interrupt rules will be fixed after board selection.
 
 - `qset_can_transport.h` defines allocation-free controller instances bound to
   either the primary or backup bus. It exposes nonblocking initialization,
-  start/stop, raw RX/TX, controller-state and latest-fault queries, and an
-  asynchronous bus-off recovery request.
+  start/stop, raw RX/TX, controller-state and latest-fault queries, an
+  asynchronous bus-off recovery request, and a diagnostics getter.
+- RX controller overruns are counted by the vendor adapter and collected by the
+  transport. The adapter increments its own saturating count for every
+  overrun event, normally in its ISR, and implements `take_rx_overruns`, which
+  returns and resets that count. The transport calls it on every receive and
+  adds the result to its saturating `rx_controller_overruns` counter. Reading
+  diagnostics never clears them.
 - Receive items wrap `qset_can_frame_t` with C-only bus-channel and monotonic
   microsecond metadata. The frame type and Rust ABI remain unchanged.
 - Vendor adapters implement a required operations table and translate their
@@ -21,7 +27,10 @@ depths, and interrupt rules will be fixed after board selection.
 - `qset_can_mock.h` supplies a deterministic 16-frame FIFO loopback adapter for
   host tests. It does not model RTOS scheduling or physical-bus timing.
 - Calls are serialized by their owner. A future RX/TX task or ISR handoff owns
-  synchronization; the portable wrapper and mock contain no locks.
+  synchronization; the portable wrapper and mock contain no locks. The one
+  exception is inside each vendor adapter: `take_rx_overruns` must read and
+  reset its count atomically with respect to its own ISR, for example by
+  masking the CAN interrupt, so no overrun is lost.
 
 ## Ownership and data flow
 
@@ -46,6 +55,83 @@ future Rust encoder → C TX request → C TX queue → C TX task → CAN contro
   neither calls FreeRTOS nor touches hardware. C carries raw frames without
   editing their ID, DLC, or on-wire payload bytes.
 
+## Implementing RX overrun reporting in a board adapter
+
+An RX controller overrun happens when a frame arrives while the controller's
+hardware receive buffer is still full, so the hardware drops a frame before
+software can copy it out. Only the board adapter can see this, so each adapter
+counts overruns itself and the portable transport collects the count through
+`take_rx_overruns`. The adapter never includes or writes transport diagnostics.
+
+What the adapter must do:
+
+1. **Find the overrun indication in the chip's reference manual.** Most CAN
+   controllers have a receive FIFO or mailbox overrun status flag, often with
+   an interrupt enable. Enable that interrupt, or check the flag in the
+   existing receive ISR.
+2. **Count events, not frames.** Many controllers only report that at least
+   one frame was lost, not how many. Add one to the count each time the flag
+   is seen set, then clear the flag as the manual describes so the next
+   overrun is detected. Do not try to estimate the number of lost frames.
+3. **Keep a count, not a yes/no flag.** Several overruns between two transport
+   polls must all be counted. Saturate at `UINT32_MAX`; never wrap.
+4. **Make read-and-reset atomic against the ISR.** Between reading the count
+   and setting it to zero, the ISR must not run, or an overrun arriving in
+   between is lost. Mask the CAN interrupt (or use the RTOS's critical-section
+   API) around those two steps only, and keep the section short.
+5. **Report failure without losing the count.** If the callback cannot read
+   the count, return an error and leave both `*out_count` and the stored count
+   unchanged. The transport adds nothing and picks it up on the next call.
+6. **Do not report overruns through `get_last_fault` only.** Latching
+   `QSET_CAN_DRIVER_FAULT_RX_OVERRUN` there is still allowed for the latest
+   fault query, but the latched fault is not a counter.
+
+Chip-neutral example. `board_can_*` stands for the board's own register access
+or vendor HAL calls:
+
+```c
+typedef struct {
+    /* volatile: written by the ISR, read by task code. */
+    volatile uint32_t rx_overruns;
+    /* ...other adapter state... */
+} board_can_context_t;
+
+/* Called from the board's CAN receive/error interrupt handler. */
+static void board_can_handle_rx_overrun(board_can_context_t *ctx)
+{
+    if (board_can_rx_overrun_flag_is_set()) {
+        if (ctx->rx_overruns != UINT32_MAX) {
+            ctx->rx_overruns++;
+        }
+        board_can_clear_rx_overrun_flag();
+    }
+}
+
+/* Ops-table callback, called by the transport from task context. */
+static qset_can_driver_result_t board_can_take_rx_overruns(void *context,
+                                                           uint32_t *out_count)
+{
+    board_can_context_t *ctx = (board_can_context_t *)context;
+    uint32_t count;
+
+    if (ctx == 0 || out_count == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    board_can_mask_interrupt();
+    count = ctx->rx_overruns;
+    ctx->rx_overruns = 0u;
+    board_can_unmask_interrupt();
+
+    *out_count = count;
+    return QSET_CAN_DRIVER_OK;
+}
+```
+
+Register the callback as `.take_rx_overruns = board_can_take_rx_overruns` in
+the adapter's `qset_can_driver_ops_t`. Init rejects an operations table that
+leaves it out. `mock_take_rx_overruns` in `protocol/src/qset_can_mock.c` is the
+host reference for the same contract; it has no interrupt to mask.
+
 The same Rust core is linked into OBC and subsystem firmware. An OBC-specific
 application will issue commands; other applications will consume commands
 addressed to them and publish their own telemetry/errors. Sender authority
@@ -60,5 +146,6 @@ cannot be inferred from a command ID and needs a separate system policy.
 3. Set queue depth, task priority/stack, and bus-off/recovery behavior from
    traffic and hardware requirements. Review ISR safety against the chosen
    FreeRTOS port.
-4. Test RX, TX, queue overflow, controller errors, and recovery with a real
-   second CAN node before enabling mission messages.
+4. Test RX, TX, queue overflow, RX controller overrun counting, controller
+   errors, and recovery with a real second CAN node before enabling mission
+   messages.

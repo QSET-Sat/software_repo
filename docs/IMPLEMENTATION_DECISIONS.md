@@ -295,6 +295,11 @@ periodic state.
 - The C transport maintains a fixed-size, statically allocated diagnostic
   structure with saturating counters, current bus state, and latest driver error.
 - A nonblocking getter returns a consistent snapshot.
+- RX controller overruns are reported through the driver operations table,
+  not by drivers writing transport counters. Each adapter counts overrun events
+  and returns-and-resets that count through a required callback; the portable
+  transport collects it and owns the saturating counter. This keeps adapters
+  independent of the diagnostics layer and rejects adapters that omit it.
 - Reading does not clear counters. Counters reset only with the processor or a
   future explicit maintenance operation.
 - Version 1 transmits only aggregate active-fault count; detailed diagnostic

@@ -70,6 +70,10 @@ static void test_layout_and_lifecycle(void)
     incomplete_ops.transmit = 0;
     assert(qset_can_controller_init(&controller, &incomplete_ops, &mock, &primary_config) ==
            QSET_CAN_DRIVER_INVALID_ARGUMENT);
+    incomplete_ops = qset_can_mock_driver_ops;
+    incomplete_ops.take_rx_overruns = 0;
+    assert(qset_can_controller_init(&controller, &incomplete_ops, &mock, &primary_config) ==
+           QSET_CAN_DRIVER_INVALID_ARGUMENT);
 
     assert(qset_can_controller_init(&controller, &qset_can_mock_driver_ops, &mock,
                                     &primary_config) == QSET_CAN_DRIVER_OK);
@@ -317,6 +321,88 @@ static void test_injected_control_failures(void)
     assert(fault == QSET_CAN_DRIVER_FAULT_RX_OVERRUN);
 }
 
+static void test_rx_controller_overruns(void)
+{
+    qset_can_controller_t controller = {0};
+    qset_can_mock_t mock = {0};
+    qset_can_frame_t frame = make_frame(0x402u, 0x40u);
+    qset_can_rx_item_t item;
+    qset_can_diagnostics_t diagnostics = {.rx_controller_overruns = 99u};
+    qset_can_diagnostics_t unchanged;
+
+    /* Readable before init, and starts at zero. */
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 0u);
+    assert(qset_can_mock_inject_rx_overruns(&mock, 1u) == QSET_CAN_DRIVER_INVALID_STATE);
+
+    init_and_start(&controller, &mock, QSET_CAN_BUS_PRIMARY);
+
+    /* Overruns are collected on receive, even when no frame is waiting. */
+    assert(qset_can_mock_inject_rx_overruns(&mock, 3u) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 0u);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 3u);
+
+    /* Later events add to the total, and a frame is still delivered. */
+    assert(qset_can_controller_transmit(&controller, &frame) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_inject_rx_overruns(&mock, 2u) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_OK);
+    assert(item.frame.id == frame.id);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 5u);
+
+    /* The driver's count was reset by the take, so nothing is double counted. */
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 5u);
+
+    /* Reading does not clear. */
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 5u);
+
+    /* A failed take adds nothing and loses nothing. */
+    assert(qset_can_mock_inject_rx_overruns(&mock, 4u) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_TAKE_RX_OVERRUNS,
+                                   QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 5u);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 9u);
+
+    /* Saturates instead of wrapping. */
+    assert(qset_can_mock_inject_rx_overruns(&mock, UINT32_MAX) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == UINT32_MAX);
+    assert(qset_can_mock_inject_rx_overruns(&mock, 1u) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == UINT32_MAX);
+
+    /* Null pointers leave the output unchanged. */
+    unchanged = diagnostics;
+    assert(qset_can_controller_get_diagnostics(0, &diagnostics) ==
+           QSET_CAN_DRIVER_NULL_POINTER);
+    assert(qset_can_controller_get_diagnostics(&controller, 0) ==
+           QSET_CAN_DRIVER_NULL_POINTER);
+    assert(diagnostics.rx_controller_overruns == unchanged.rx_controller_overruns);
+    assert(qset_can_mock_inject_rx_overruns(0, 1u) == QSET_CAN_DRIVER_NULL_POINTER);
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -325,6 +411,7 @@ int main(void)
     test_fifo_and_channel_isolation();
     test_states_faults_and_recovery();
     test_injected_control_failures();
+    test_rx_controller_overruns();
     puts("Portable C CAN transport: passed");
     return 0;
 }

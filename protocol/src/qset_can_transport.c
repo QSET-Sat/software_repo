@@ -30,12 +30,34 @@ static int ops_are_complete(const qset_can_driver_ops_t *ops)
 {
     return ops->initialize != 0 && ops->start != 0 && ops->stop != 0 &&
            ops->receive != 0 && ops->transmit != 0 && ops->get_state != 0 &&
-           ops->get_last_fault != 0 && ops->recover_bus_off != 0;
+           ops->get_last_fault != 0 && ops->recover_bus_off != 0 &&
+           ops->take_rx_overruns != 0;
 }
 
 static qset_can_driver_result_t normalize_result(qset_can_driver_result_t result)
 {
     return result_is_valid(result) ? result : QSET_CAN_DRIVER_FAILURE;
+}
+
+static void saturating_add(uint32_t *counter, uint32_t amount)
+{
+    if (amount > UINT32_MAX - *counter) {
+        *counter = UINT32_MAX;
+    } else {
+        *counter += amount;
+    }
+}
+
+/* A failed take adds nothing; the driver keeps its count for the next call. */
+static void collect_rx_overruns(qset_can_controller_t *controller)
+{
+    uint32_t count = 0u;
+    qset_can_driver_result_t result = normalize_result(
+        controller->ops->take_rx_overruns(controller->driver_context, &count));
+
+    if (result == QSET_CAN_DRIVER_OK) {
+        saturating_add(&controller->diagnostics.rx_controller_overruns, count);
+    }
 }
 
 static qset_can_driver_result_t read_state(const qset_can_controller_t *controller,
@@ -151,6 +173,7 @@ qset_can_driver_result_t qset_can_controller_receive(qset_can_controller_t *cont
         return QSET_CAN_DRIVER_INVALID_STATE;
     }
 
+    collect_rx_overruns(controller);
     result = normalize_result(
         controller->ops->receive(controller->driver_context, &frame, &timestamp_us));
     if (result != QSET_CAN_DRIVER_OK) {
@@ -261,4 +284,15 @@ qset_can_driver_result_t qset_can_controller_recover_bus_off(
         return QSET_CAN_DRIVER_INVALID_STATE;
     }
     return normalize_result(controller->ops->recover_bus_off(controller->driver_context));
+}
+
+qset_can_driver_result_t qset_can_controller_get_diagnostics(
+    const qset_can_controller_t *controller,
+    qset_can_diagnostics_t *out_diagnostics)
+{
+    if (controller == 0 || out_diagnostics == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    *out_diagnostics = controller->diagnostics;
+    return QSET_CAN_DRIVER_OK;
 }

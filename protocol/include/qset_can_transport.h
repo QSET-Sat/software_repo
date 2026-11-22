@@ -73,7 +73,23 @@ typedef struct qset_can_driver_ops {
     qset_can_driver_result_t (*get_last_fault)(void *context,
                                                qset_can_driver_fault_t *out_fault);
     qset_can_driver_result_t (*recover_bus_off)(void *context);
+    /* Reports RX controller overrun events: frames the controller dropped
+     * because its hardware receive buffer was full. The driver counts every
+     * event in its own storage (normally from its ISR), saturating at
+     * UINT32_MAX. This call returns the count accumulated since the previous
+     * successful call and resets it to zero. The read and reset must be one
+     * atomic step with respect to the driver's ISR, for example by masking the
+     * CAN interrupt around them, so no event is lost. On failure, out_count is
+     * unchanged and the driver keeps its count for the next call. See
+     * docs/FREERTOS_DESIGN.md, "Implementing RX overrun reporting". */
+    qset_can_driver_result_t (*take_rx_overruns)(void *context, uint32_t *out_count);
 } qset_can_driver_ops_t;
+
+/* Local transport diagnostics. Counters saturate at UINT32_MAX and never wrap.
+ * They reset only when the controller handle is re-zeroed. */
+typedef struct {
+    uint32_t rx_controller_overruns;
+} qset_can_diagnostics_t;
 
 /* Statically allocate and zero-initialize this handle before calling init.
  * Callers serialize all access; the transport does not provide locking. */
@@ -82,6 +98,7 @@ typedef struct {
     void *driver_context;
     qset_can_bus_channel_t channel;
     uint32_t nominal_bitrate;
+    qset_can_diagnostics_t diagnostics;
 } qset_can_controller_t;
 
 /* All calls are nonblocking and leave output objects unchanged on failure.
@@ -107,6 +124,13 @@ qset_can_driver_result_t qset_can_controller_get_last_fault(
     qset_can_driver_fault_t *out_fault);
 qset_can_driver_result_t qset_can_controller_recover_bus_off(
     qset_can_controller_t *controller);
+/* Receive collects pending RX overruns from the driver before reading a frame,
+ * including when it then returns NO_DATA or another error. This getter copies
+ * the collected values without clearing them. It is valid before init and
+ * returns zeros then. */
+qset_can_driver_result_t qset_can_controller_get_diagnostics(
+    const qset_can_controller_t *controller,
+    qset_can_diagnostics_t *out_diagnostics);
 
 #ifdef __cplusplus
 }

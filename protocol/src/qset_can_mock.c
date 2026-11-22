@@ -13,7 +13,7 @@ static int mock_fault_is_valid(qset_can_driver_fault_t fault)
 static int mock_operation_is_valid(qset_can_mock_operation_t operation)
 {
     return operation >= QSET_CAN_MOCK_OP_INITIALIZE &&
-           operation <= QSET_CAN_MOCK_OP_RECOVER_BUS_OFF;
+           operation <= QSET_CAN_MOCK_OP_TAKE_RX_OVERRUNS;
 }
 
 static int mock_frame_is_valid(const qset_can_frame_t *frame)
@@ -237,6 +237,27 @@ static qset_can_driver_result_t mock_recover_bus_off(void *context)
     return QSET_CAN_DRIVER_OK;
 }
 
+static qset_can_driver_result_t mock_take_rx_overruns(void *context, uint32_t *out_count)
+{
+    qset_can_mock_t *mock = (qset_can_mock_t *)context;
+    qset_can_driver_result_t result;
+
+    if (mock == 0 || out_count == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    if (mock->initialized == 0u) {
+        return QSET_CAN_DRIVER_INVALID_STATE;
+    }
+    result = mock_take_failure(mock, QSET_CAN_MOCK_OP_TAKE_RX_OVERRUNS);
+    if (result != QSET_CAN_DRIVER_OK) {
+        return result;
+    }
+    /* A real driver masks its CAN interrupt around this read and reset. */
+    *out_count = mock->pending_rx_overruns;
+    mock->pending_rx_overruns = 0u;
+    return QSET_CAN_DRIVER_OK;
+}
+
 const qset_can_driver_ops_t qset_can_mock_driver_ops = {
     .initialize = mock_initialize,
     .start = mock_start,
@@ -246,6 +267,7 @@ const qset_can_driver_ops_t qset_can_mock_driver_ops = {
     .get_state = mock_get_state,
     .get_last_fault = mock_get_last_fault,
     .recover_bus_off = mock_recover_bus_off,
+    .take_rx_overruns = mock_take_rx_overruns,
 };
 
 qset_can_driver_result_t qset_can_mock_set_time_us(qset_can_mock_t *mock,
@@ -310,6 +332,23 @@ qset_can_driver_result_t qset_can_mock_latch_fault(qset_can_mock_t *mock,
     mock->last_fault = fault;
     if (fault == QSET_CAN_DRIVER_FAULT_BUS_OFF) {
         mock->state = QSET_CAN_CONTROLLER_BUS_OFF;
+    }
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_mock_inject_rx_overruns(qset_can_mock_t *mock,
+                                                          uint32_t count)
+{
+    if (mock == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    if (mock->initialized == 0u) {
+        return QSET_CAN_DRIVER_INVALID_STATE;
+    }
+    if (count > UINT32_MAX - mock->pending_rx_overruns) {
+        mock->pending_rx_overruns = UINT32_MAX;
+    } else {
+        mock->pending_rx_overruns += count;
     }
     return QSET_CAN_DRIVER_OK;
 }
