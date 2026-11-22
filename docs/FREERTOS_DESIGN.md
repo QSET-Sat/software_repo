@@ -11,11 +11,13 @@ depths, and interrupt rules will be fixed after board selection.
   either the primary or backup bus. It exposes nonblocking initialization,
   start/stop, raw RX/TX, controller-state and latest-fault queries, an
   asynchronous bus-off recovery request, and a diagnostics getter.
-- RX controller overruns are counted by the vendor adapter and collected by the
-  transport. The adapter increments its own saturating count for every
-  overrun event, normally in its ISR, and implements `take_rx_overruns`, which
-  returns and resets that count. The transport calls it on every receive and
-  adds the result to its saturating `rx_controller_overruns` counter. Reading
+- Controller events (RX overruns, entries into error-warning, error-passive,
+  and bus-off) are counted by the vendor adapter and collected by the
+  transport. The adapter increments its own saturating counts, normally in its
+  ISR, and implements `take_events`, which returns and resets all of them in
+  one step. The transport calls it on every receive and adds the results to
+  its saturating `rx_controller_overruns`, `controller_warning_events`,
+  `controller_passive_events`, and `bus_off_events` counters. Reading
   diagnostics never clears them.
 - RX queue overflows are counted by the transport. The RX queue is not built
   yet; when it is, its push must drop the new frame when the queue is full and
@@ -60,9 +62,9 @@ depths, and interrupt rules will be fixed after board selection.
   host tests. It does not model RTOS scheduling or physical-bus timing.
 - Calls are serialized by their owner. A future RX/TX task or ISR handoff owns
   synchronization; the portable wrapper and mock contain no locks. The one
-  exception is inside each vendor adapter: `take_rx_overruns` must read and
-  reset its count atomically with respect to its own ISR, for example by
-  masking the CAN interrupt, so no overrun is lost.
+  exception is inside each vendor adapter: `take_events` must read and reset
+  its counts atomically with respect to its own ISR, for example by masking
+  the CAN interrupt, so no event is lost.
 
 ## Ownership and data flow
 
@@ -87,36 +89,50 @@ future Rust encoder → C TX request → C TX queue → C TX task → CAN contro
   neither calls FreeRTOS nor touches hardware. C carries raw frames without
   editing their ID, DLC, or on-wire payload bytes.
 
-## Implementing RX overrun reporting in a board adapter
+## Implementing controller event reporting in a board adapter
 
-An RX controller overrun happens when a frame arrives while the controller's
-hardware receive buffer is still full, so the hardware drops a frame before
-software can copy it out. Only the board adapter can see this, so each adapter
-counts overruns itself and the portable transport collects the count through
-`take_rx_overruns`. The adapter never includes or writes transport diagnostics.
+Some controller events can only be seen by the board adapter, so each adapter
+counts them itself and the portable transport collects the counts through
+`take_events`, which fills a `qset_can_driver_events_t`. The adapter never
+includes or writes transport diagnostics. The events are:
+
+- **RX overrun:** a frame arrived while the controller's hardware receive
+  buffer was still full, so the hardware dropped a frame before software could
+  copy it out.
+- **Error-warning:** the controller's transmit or receive error count crossed
+  the warning level (typically 96) while error-active.
+- **Error-passive:** an error count crossed the passive level (128) while
+  error-active or error-warning.
+- **Bus-off:** the transmit error count exceeded 255 while the controller was
+  running, so it removed itself from the bus.
 
 What the adapter must do:
 
-1. **Find the overrun indication in the chip's reference manual.** Most CAN
-   controllers have a receive FIFO or mailbox overrun status flag, often with
-   an interrupt enable. Enable that interrupt, or check the flag in the
-   existing receive ISR.
-2. **Count events, not frames.** Many controllers only report that at least
-   one frame was lost, not how many. Add one to the count each time the flag
-   is seen set, then clear the flag as the manual describes so the next
-   overrun is detected. Do not try to estimate the number of lost frames.
-3. **Keep a count, not a yes/no flag.** Several overruns between two transport
-   polls must all be counted. Saturate at `UINT32_MAX`; never wrap.
-4. **Make read-and-reset atomic against the ISR.** Between reading the count
-   and setting it to zero, the ISR must not run, or an overrun arriving in
+1. **Find each indication in the chip's reference manual.** Most CAN
+   controllers have a receive FIFO or mailbox overrun status flag and
+   error-state change flags (warning, passive, bus-off), usually with interrupt
+   enables. Enable those interrupts, or check the flags in the existing ISR.
+2. **Count events, not frames or time.** For overruns, many controllers only
+   report that at least one frame was lost; add one each time the flag is seen
+   set and do not estimate the number of lost frames. For error states, add
+   one each time the controller enters a worse state, for the state entered.
+   Moving to a healthier state is not counted. A recovery attempt that ends
+   back in bus-off is not a new bus-off event.
+3. **Clear each flag after counting it**, as the manual describes, so the next
+   event is detected.
+4. **Keep counts, not yes/no flags.** Several events between two transport
+   polls must all be counted. Saturate each count at `UINT32_MAX`; never wrap.
+5. **Make read-and-reset atomic against the ISR.** Between reading the counts
+   and setting them to zero, the ISR must not run, or an event arriving in
    between is lost. Mask the CAN interrupt (or use the RTOS's critical-section
-   API) around those two steps only, and keep the section short.
-5. **Report failure without losing the count.** If the callback cannot read
-   the count, return an error and leave both `*out_count` and the stored count
-   unchanged. The transport adds nothing and picks it up on the next call.
-6. **Do not report overruns through `get_last_fault` only.** Latching
-   `QSET_CAN_DRIVER_FAULT_RX_OVERRUN` there is still allowed for the latest
-   fault query, but the latched fault is not a counter.
+   API) around those steps only, and keep the section short.
+6. **Report failure without losing counts.** If the callback cannot read the
+   counts, return an error and leave both `*out_events` and the stored counts
+   unchanged. The transport adds nothing and picks them up on the next call.
+7. **Do not report events through `get_state` or `get_last_fault` only.**
+   Those still report the current state and latest fault, but neither is a
+   counter, and the transport does not count by polling them, because short
+   episodes between polls would be missed.
 
 Chip-neutral example. `board_can_*` stands for the board's own register access
 or vendor HAL calls:
@@ -124,45 +140,69 @@ or vendor HAL calls:
 ```c
 typedef struct {
     /* volatile: written by the ISR, read by task code. */
-    volatile uint32_t rx_overruns;
+    volatile qset_can_driver_events_t events;
     /* ...other adapter state... */
 } board_can_context_t;
 
+static void board_can_count(volatile uint32_t *count)
+{
+    if (*count != UINT32_MAX) {
+        (*count)++;
+    }
+}
+
 /* Called from the board's CAN receive/error interrupt handler. */
-static void board_can_handle_rx_overrun(board_can_context_t *ctx)
+static void board_can_handle_events(board_can_context_t *ctx)
 {
     if (board_can_rx_overrun_flag_is_set()) {
-        if (ctx->rx_overruns != UINT32_MAX) {
-            ctx->rx_overruns++;
-        }
+        board_can_count(&ctx->events.rx_overruns);
         board_can_clear_rx_overrun_flag();
+    }
+    if (board_can_entered_warning()) {
+        board_can_count(&ctx->events.warning_events);
+        board_can_clear_warning_flag();
+    }
+    if (board_can_entered_passive()) {
+        board_can_count(&ctx->events.passive_events);
+        board_can_clear_passive_flag();
+    }
+    if (board_can_entered_bus_off()) {
+        board_can_count(&ctx->events.bus_off_events);
+        board_can_clear_bus_off_flag();
     }
 }
 
 /* Ops-table callback, called by the transport from task context. */
-static qset_can_driver_result_t board_can_take_rx_overruns(void *context,
-                                                           uint32_t *out_count)
+static qset_can_driver_result_t board_can_take_events(void *context,
+                                                      qset_can_driver_events_t *out_events)
 {
     board_can_context_t *ctx = (board_can_context_t *)context;
-    uint32_t count;
+    qset_can_driver_events_t taken;
 
-    if (ctx == 0 || out_count == 0) {
+    if (ctx == 0 || out_events == 0) {
         return QSET_CAN_DRIVER_NULL_POINTER;
     }
     board_can_mask_interrupt();
-    count = ctx->rx_overruns;
-    ctx->rx_overruns = 0u;
+    taken.rx_overruns = ctx->events.rx_overruns;
+    taken.warning_events = ctx->events.warning_events;
+    taken.passive_events = ctx->events.passive_events;
+    taken.bus_off_events = ctx->events.bus_off_events;
+    ctx->events.rx_overruns = 0u;
+    ctx->events.warning_events = 0u;
+    ctx->events.passive_events = 0u;
+    ctx->events.bus_off_events = 0u;
     board_can_unmask_interrupt();
 
-    *out_count = count;
+    *out_events = taken;
     return QSET_CAN_DRIVER_OK;
 }
 ```
 
-Register the callback as `.take_rx_overruns = board_can_take_rx_overruns` in
-the adapter's `qset_can_driver_ops_t`. Init rejects an operations table that
-leaves it out. `mock_take_rx_overruns` in `protocol/src/qset_can_mock.c` is the
-host reference for the same contract; it has no interrupt to mask.
+Register the callback as `.take_events = board_can_take_events` in the
+adapter's `qset_can_driver_ops_t`. Init rejects an operations table that leaves
+it out. `mock_take_events` and `mock_set_state` in `protocol/src/qset_can_mock.c`
+are the host reference for the same contract; the mock has no interrupt to
+mask.
 
 The same Rust core is linked into OBC and subsystem firmware. An OBC-specific
 application will issue commands; other applications will consume commands
@@ -178,6 +218,6 @@ cannot be inferred from a command ID and needs a separate system policy.
 3. Set queue depth, task priority/stack, and bus-off/recovery behavior from
    traffic and hardware requirements. Review ISR safety against the chosen
    FreeRTOS port.
-4. Test RX, TX, queue overflow, RX controller overrun counting, controller
+4. Test RX, TX, queue overflow, controller event counting, controller
    errors, and recovery with a real second CAN node before enabling mission
    messages.

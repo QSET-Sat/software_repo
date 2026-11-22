@@ -71,7 +71,7 @@ static void test_layout_and_lifecycle(void)
     assert(qset_can_controller_init(&controller, &incomplete_ops, &mock, &primary_config) ==
            QSET_CAN_DRIVER_INVALID_ARGUMENT);
     incomplete_ops = qset_can_mock_driver_ops;
-    incomplete_ops.take_rx_overruns = 0;
+    incomplete_ops.take_events = 0;
     assert(qset_can_controller_init(&controller, &incomplete_ops, &mock, &primary_config) ==
            QSET_CAN_DRIVER_INVALID_ARGUMENT);
 
@@ -321,6 +321,14 @@ static void test_injected_control_failures(void)
     assert(fault == QSET_CAN_DRIVER_FAULT_RX_OVERRUN);
 }
 
+static qset_can_driver_result_t inject_overruns(qset_can_mock_t *mock, uint32_t count)
+{
+    qset_can_driver_events_t events = {0};
+
+    events.rx_overruns = count;
+    return qset_can_mock_inject_events(mock, &events);
+}
+
 static void test_rx_controller_overruns(void)
 {
     qset_can_controller_t controller = {0};
@@ -334,12 +342,12 @@ static void test_rx_controller_overruns(void)
     assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
            QSET_CAN_DRIVER_OK);
     assert(diagnostics.rx_controller_overruns == 0u);
-    assert(qset_can_mock_inject_rx_overruns(&mock, 1u) == QSET_CAN_DRIVER_INVALID_STATE);
+    assert(inject_overruns(&mock, 1u) == QSET_CAN_DRIVER_INVALID_STATE);
 
     init_and_start(&controller, &mock, QSET_CAN_BUS_PRIMARY);
 
     /* Overruns are collected on receive, even when no frame is waiting. */
-    assert(qset_can_mock_inject_rx_overruns(&mock, 3u) == QSET_CAN_DRIVER_OK);
+    assert(inject_overruns(&mock, 3u) == QSET_CAN_DRIVER_OK);
     assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
            QSET_CAN_DRIVER_OK);
     assert(diagnostics.rx_controller_overruns == 0u);
@@ -350,7 +358,7 @@ static void test_rx_controller_overruns(void)
 
     /* Later events add to the total, and a frame is still delivered. */
     assert(qset_can_controller_transmit(&controller, &frame) == QSET_CAN_DRIVER_OK);
-    assert(qset_can_mock_inject_rx_overruns(&mock, 2u) == QSET_CAN_DRIVER_OK);
+    assert(inject_overruns(&mock, 2u) == QSET_CAN_DRIVER_OK);
     assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_OK);
     assert(item.frame.id == frame.id);
     assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
@@ -369,8 +377,8 @@ static void test_rx_controller_overruns(void)
     assert(diagnostics.rx_controller_overruns == 5u);
 
     /* A failed take adds nothing and loses nothing. */
-    assert(qset_can_mock_inject_rx_overruns(&mock, 4u) == QSET_CAN_DRIVER_OK);
-    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_TAKE_RX_OVERRUNS,
+    assert(inject_overruns(&mock, 4u) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_TAKE_EVENTS,
                                    QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
     assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
     assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
@@ -382,12 +390,12 @@ static void test_rx_controller_overruns(void)
     assert(diagnostics.rx_controller_overruns == 9u);
 
     /* Saturates instead of wrapping. */
-    assert(qset_can_mock_inject_rx_overruns(&mock, UINT32_MAX) == QSET_CAN_DRIVER_OK);
+    assert(inject_overruns(&mock, UINT32_MAX) == QSET_CAN_DRIVER_OK);
     assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
     assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
            QSET_CAN_DRIVER_OK);
     assert(diagnostics.rx_controller_overruns == UINT32_MAX);
-    assert(qset_can_mock_inject_rx_overruns(&mock, 1u) == QSET_CAN_DRIVER_OK);
+    assert(inject_overruns(&mock, 1u) == QSET_CAN_DRIVER_OK);
     assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
     assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
            QSET_CAN_DRIVER_OK);
@@ -400,7 +408,7 @@ static void test_rx_controller_overruns(void)
     assert(qset_can_controller_get_diagnostics(&controller, 0) ==
            QSET_CAN_DRIVER_NULL_POINTER);
     assert(diagnostics.rx_controller_overruns == unchanged.rx_controller_overruns);
-    assert(qset_can_mock_inject_rx_overruns(0, 1u) == QSET_CAN_DRIVER_NULL_POINTER);
+    assert(inject_overruns(0, 1u) == QSET_CAN_DRIVER_NULL_POINTER);
 }
 
 static void test_rx_queue_overflows(void)
@@ -438,7 +446,7 @@ static void test_rx_queue_overflows(void)
 
     /* Independent of the RX controller overrun counter, in both directions. */
     assert(diagnostics.rx_controller_overruns == 0u);
-    assert(qset_can_mock_inject_rx_overruns(&mock, 7u) == QSET_CAN_DRIVER_OK);
+    assert(inject_overruns(&mock, 7u) == QSET_CAN_DRIVER_OK);
     assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
     assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
            QSET_CAN_DRIVER_OK);
@@ -776,6 +784,137 @@ static void test_suppressed_violation_reports(void)
            QSET_CAN_DRIVER_NULL_POINTER);
 }
 
+/* Runs one receive so pending driver events are collected, then checks all
+ * four controller event counters. */
+static void expect_controller_events(qset_can_controller_t *controller,
+                                     uint32_t overruns,
+                                     uint32_t warning,
+                                     uint32_t passive,
+                                     uint32_t bus_off)
+{
+    qset_can_rx_item_t item;
+    qset_can_diagnostics_t diagnostics;
+
+    assert(qset_can_controller_receive(controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+    read_diagnostics(controller, &diagnostics);
+    assert(diagnostics.rx_controller_overruns == overruns);
+    assert(diagnostics.controller_warning_events == warning);
+    assert(diagnostics.controller_passive_events == passive);
+    assert(diagnostics.bus_off_events == bus_off);
+}
+
+static void test_controller_error_events(void)
+{
+    qset_can_controller_t controller = {0};
+    qset_can_mock_t mock = {0};
+    qset_can_frame_t frame = make_frame(0x405u, 0x70u);
+    qset_can_diagnostics_t diagnostics;
+    qset_can_driver_events_t events = {0};
+    const qset_can_driver_events_t one_each = {1u, 1u, 1u, 1u};
+    const qset_can_driver_events_t max_each = {0u, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.controller_warning_events == 0u);
+    assert(diagnostics.controller_passive_events == 0u);
+    assert(diagnostics.bus_off_events == 0u);
+    assert(qset_can_mock_inject_events(&mock, &one_each) == QSET_CAN_DRIVER_INVALID_STATE);
+
+    init_and_start(&controller, &mock, QSET_CAN_BUS_PRIMARY);
+
+    /* Entering warning is counted, once collected by receive. */
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_WARNING) ==
+           QSET_CAN_DRIVER_OK);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.controller_warning_events == 0u);
+    expect_controller_events(&controller, 0u, 1u, 0u, 0u);
+
+    /* Warning to passive counts passive. */
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_PASSIVE) ==
+           QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 1u, 1u, 0u);
+
+    /* Improving from passive to warning is not counted. */
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_WARNING) ==
+           QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 1u, 1u, 0u);
+
+    /* A second warning episode counts again. */
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_ACTIVE) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_WARNING) ==
+           QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 2u, 1u, 0u);
+
+    /* Active straight to passive counts passive only. */
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_ACTIVE) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_PASSIVE) ==
+           QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 2u, 2u, 0u);
+
+    /* Passive to bus-off counts bus-off; receive still collects in bus-off. */
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_BUS_OFF) ==
+           QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 2u, 2u, 1u);
+
+    /* A failed recovery returns to bus-off without a new bus-off event. */
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_complete_recovery(&mock, QSET_CAN_DRIVER_FAULT_HARDWARE) ==
+           QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 2u, 2u, 1u);
+
+    /* Bus-off from a latched fault and from a failed transmit both count. */
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_complete_recovery(&mock, QSET_CAN_DRIVER_FAULT_NONE) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_latch_fault(&mock, QSET_CAN_DRIVER_FAULT_BUS_OFF) ==
+           QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 2u, 2u, 2u);
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_ACTIVE) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_TRANSMIT,
+                                   QSET_CAN_DRIVER_FAULT_BUS_OFF) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_transmit(&controller, &frame) == QSET_CAN_DRIVER_FAILURE);
+    expect_controller_events(&controller, 0u, 2u, 2u, 3u);
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_ACTIVE) ==
+           QSET_CAN_DRIVER_OK);
+
+    /* Episodes too short for the state to show are still counted exactly,
+     * because the driver counts them, not the transport polling state. */
+    events.warning_events = 3u;
+    assert(qset_can_mock_inject_events(&mock, &events) == QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 5u, 2u, 3u);
+
+    /* A failed take adds nothing and loses nothing, for every field. */
+    assert(qset_can_mock_inject_events(&mock, &one_each) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_TAKE_EVENTS,
+                                   QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 0u, 5u, 2u, 3u);
+    expect_controller_events(&controller, 1u, 6u, 3u, 4u);
+
+    /* Reading does not clear, and non-controller counters are unaffected. */
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.controller_warning_events == 6u);
+    assert(diagnostics.controller_passive_events == 3u);
+    assert(diagnostics.bus_off_events == 4u);
+    assert(diagnostics.rx_queue_overflows == 0u);
+    assert(diagnostics.tx_queue_full_failures == 0u);
+    assert(diagnostics.invalid_frames == 0u);
+    assert(diagnostics.late_responses == 0u);
+    assert(diagnostics.duplicate_responses == 0u);
+    assert(diagnostics.unexpected_sequences == 0u);
+    assert(diagnostics.suppressed_violation_reports == 0u);
+
+    /* Each counter saturates instead of wrapping. */
+    assert(qset_can_mock_inject_events(&mock, &max_each) == QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 1u, UINT32_MAX, UINT32_MAX, UINT32_MAX);
+    assert(qset_can_mock_inject_events(&mock, &one_each) == QSET_CAN_DRIVER_OK);
+    expect_controller_events(&controller, 2u, UINT32_MAX, UINT32_MAX, UINT32_MAX);
+
+    assert(qset_can_mock_inject_events(0, &one_each) == QSET_CAN_DRIVER_NULL_POINTER);
+    assert(qset_can_mock_inject_events(&mock, 0) == QSET_CAN_DRIVER_NULL_POINTER);
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -790,6 +929,7 @@ int main(void)
     test_invalid_frames();
     test_response_correlation_counters();
     test_suppressed_violation_reports();
+    test_controller_error_events();
     puts("Portable C CAN transport: passed");
     return 0;
 }

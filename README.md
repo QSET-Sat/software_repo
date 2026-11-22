@@ -16,12 +16,12 @@ sensor message is not a QSET production message.
 - A portable, nonblocking C transport API defines controller lifecycle, raw
   RX/TX, primary/backup channel identity, controller state, normalized driver
   faults, receive timestamps, asynchronous bus-off recovery, and saturating
-  RX controller overrun, RX queue overflow, TX queue-full, invalid-frame, and
-  late/duplicate/unexpected response, and suppressed violation report
-  diagnostics.
+  diagnostics for RX controller overruns, error-warning/error-passive/bus-off
+  events, RX queue overflows, TX queue-full failures, invalid frames,
+  late/duplicate/unexpected responses, and suppressed violation reports.
 - An allocation-free mock controller provides deterministic FIFO loopback,
-  manual timestamps, and fault/recovery/overrun/corrupt-frame injection for
-  host tests.
+  manual timestamps, and fault/recovery/controller-event/corrupt-frame
+  injection for host tests.
 - Each firmware target selects its node ID at build time with
   `make node-config NODE=<name>`. See
   [Local node selection](protocol/SPEC.md#local-node-selection).

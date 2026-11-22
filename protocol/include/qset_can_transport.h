@@ -57,6 +57,25 @@ typedef struct {
     uint64_t timestamp_us;
 } qset_can_rx_item_t;
 
+/* Controller events counted by the driver since the previous successful
+ * take_events call. Each field saturates at UINT32_MAX in the driver.
+ * - rx_overruns: frames the controller dropped because its hardware receive
+ *   buffer was full; one per overrun indication seen.
+ * - warning_events: entries into ERROR_WARNING from ERROR_ACTIVE.
+ * - passive_events: entries into ERROR_PASSIVE from ERROR_ACTIVE or
+ *   ERROR_WARNING.
+ * - bus_off_events: entries into BUS_OFF from ERROR_ACTIVE, ERROR_WARNING,
+ *   or ERROR_PASSIVE. A recovery attempt that ends back in BUS_OFF is a
+ *   recovery failure, not a new bus-off event.
+ * One transition counts once, for the state entered. Moves toward a healthier
+ * state are not counted. */
+typedef struct {
+    uint32_t rx_overruns;
+    uint32_t warning_events;
+    uint32_t passive_events;
+    uint32_t bus_off_events;
+} qset_can_driver_events_t;
+
 /* Every callback is required. Implementations map vendor-specific failures to
  * the portable result/fault enums before returning through this interface. */
 typedef struct qset_can_driver_ops {
@@ -73,22 +92,28 @@ typedef struct qset_can_driver_ops {
     qset_can_driver_result_t (*get_last_fault)(void *context,
                                                qset_can_driver_fault_t *out_fault);
     qset_can_driver_result_t (*recover_bus_off)(void *context);
-    /* Reports RX controller overrun events: frames the controller dropped
-     * because its hardware receive buffer was full. The driver counts every
-     * event in its own storage (normally from its ISR), saturating at
-     * UINT32_MAX. This call returns the count accumulated since the previous
-     * successful call and resets it to zero. The read and reset must be one
-     * atomic step with respect to the driver's ISR, for example by masking the
-     * CAN interrupt around them, so no event is lost. On failure, out_count is
-     * unchanged and the driver keeps its count for the next call. See
-     * docs/FREERTOS_DESIGN.md, "Implementing RX overrun reporting". */
-    qset_can_driver_result_t (*take_rx_overruns)(void *context, uint32_t *out_count);
+    /* Reports controller events. The driver counts every event in its own
+     * storage (normally from its ISR) as defined by qset_can_driver_events_t.
+     * This call returns all counts accumulated since the previous successful
+     * call and resets them to zero. The read and reset of all fields must be
+     * one atomic step with respect to the driver's ISR, for example by masking
+     * the CAN interrupt around them, so no event is lost. On failure,
+     * out_events is unchanged and the driver keeps its counts for the next
+     * call. See docs/FREERTOS_DESIGN.md, "Implementing controller event
+     * reporting". */
+    qset_can_driver_result_t (*take_events)(void *context,
+                                            qset_can_driver_events_t *out_events);
 } qset_can_driver_ops_t;
 
 /* Local transport diagnostics. Counters saturate at UINT32_MAX and never wrap.
  * They reset only when the controller handle is re-zeroed. */
 typedef struct {
+    /* Controller events collected from the driver; see
+     * qset_can_driver_events_t for what each one counts. */
     uint32_t rx_controller_overruns;
+    uint32_t controller_warning_events;
+    uint32_t controller_passive_events;
+    uint32_t bus_off_events;
     /* Received frames dropped because the RX queue was full. One per frame. */
     uint32_t rx_queue_overflows;
     /* Send requests refused because the TX queue was full. One per refusal. */
@@ -152,7 +177,8 @@ qset_can_driver_result_t qset_can_controller_get_last_fault(
     qset_can_driver_fault_t *out_fault);
 qset_can_driver_result_t qset_can_controller_recover_bus_off(
     qset_can_controller_t *controller);
-/* Receive collects pending RX overruns from the driver before reading a frame,
+/* Receive collects pending controller events from the driver before reading a
+ * frame,
  * including when it then returns NO_DATA or another error. This getter copies
  * the collected values without clearing them. It is valid before init and
  * returns zeros then. */

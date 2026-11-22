@@ -31,7 +31,7 @@ static int ops_are_complete(const qset_can_driver_ops_t *ops)
     return ops->initialize != 0 && ops->start != 0 && ops->stop != 0 &&
            ops->receive != 0 && ops->transmit != 0 && ops->get_state != 0 &&
            ops->get_last_fault != 0 && ops->recover_bus_off != 0 &&
-           ops->take_rx_overruns != 0;
+           ops->take_events != 0;
 }
 
 static qset_can_driver_result_t normalize_result(qset_can_driver_result_t result)
@@ -48,16 +48,21 @@ static void saturating_add(uint32_t *counter, uint32_t amount)
     }
 }
 
-/* A failed take adds nothing; the driver keeps its count for the next call. */
-static void collect_rx_overruns(qset_can_controller_t *controller)
+/* A failed take adds nothing; the driver keeps its counts for the next call. */
+static void collect_events(qset_can_controller_t *controller)
 {
-    uint32_t count = 0u;
+    qset_can_driver_events_t events = {0u, 0u, 0u, 0u};
+    qset_can_diagnostics_t *diagnostics = &controller->diagnostics;
     qset_can_driver_result_t result = normalize_result(
-        controller->ops->take_rx_overruns(controller->driver_context, &count));
+        controller->ops->take_events(controller->driver_context, &events));
 
-    if (result == QSET_CAN_DRIVER_OK) {
-        saturating_add(&controller->diagnostics.rx_controller_overruns, count);
+    if (result != QSET_CAN_DRIVER_OK) {
+        return;
     }
+    saturating_add(&diagnostics->rx_controller_overruns, events.rx_overruns);
+    saturating_add(&diagnostics->controller_warning_events, events.warning_events);
+    saturating_add(&diagnostics->controller_passive_events, events.passive_events);
+    saturating_add(&diagnostics->bus_off_events, events.bus_off_events);
 }
 
 static qset_can_driver_result_t read_state(const qset_can_controller_t *controller,
@@ -173,7 +178,7 @@ qset_can_driver_result_t qset_can_controller_receive(qset_can_controller_t *cont
         return QSET_CAN_DRIVER_INVALID_STATE;
     }
 
-    collect_rx_overruns(controller);
+    collect_events(controller);
     result = normalize_result(
         controller->ops->receive(controller->driver_context, &frame, &timestamp_us));
     if (result != QSET_CAN_DRIVER_OK) {

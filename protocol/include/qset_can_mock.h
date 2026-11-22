@@ -20,7 +20,7 @@ typedef enum {
     QSET_CAN_MOCK_OP_GET_STATE = 5,
     QSET_CAN_MOCK_OP_GET_LAST_FAULT = 6,
     QSET_CAN_MOCK_OP_RECOVER_BUS_OFF = 7,
-    QSET_CAN_MOCK_OP_TAKE_RX_OVERRUNS = 8
+    QSET_CAN_MOCK_OP_TAKE_EVENTS = 8
 } qset_can_mock_operation_t;
 
 typedef struct {
@@ -34,7 +34,7 @@ typedef struct {
     qset_can_mock_queue_entry_t queue[QSET_CAN_MOCK_QUEUE_CAPACITY];
     uint64_t current_time_us;
     uint32_t nominal_bitrate;
-    uint32_t pending_rx_overruns;
+    qset_can_driver_events_t pending_events;
     qset_can_controller_state_t state;
     qset_can_driver_fault_t last_fault;
     qset_can_bus_channel_t channel;
@@ -59,10 +59,14 @@ qset_can_driver_result_t qset_can_mock_force_state(qset_can_mock_t *mock,
                                                    qset_can_controller_state_t state);
 qset_can_driver_result_t qset_can_mock_latch_fault(qset_can_mock_t *mock,
                                                    qset_can_driver_fault_t fault);
-/* Simulates the driver ISR observing count RX controller overruns. The pending
- * count saturates at UINT32_MAX until the transport takes it. */
-qset_can_driver_result_t qset_can_mock_inject_rx_overruns(qset_can_mock_t *mock,
-                                                          uint32_t count);
+/* State changes made by force_state, latch_fault, and injected bus-off
+ * failures count warning, error-passive, and bus-off events the way a real
+ * driver's ISR would (see qset_can_driver_events_t). This control adds
+ * arbitrary extra counts, as if the ISR saw events the state does not show,
+ * such as an overrun or a short warning episode. Pending counts saturate at
+ * UINT32_MAX until the transport takes them. */
+qset_can_driver_result_t qset_can_mock_inject_events(qset_can_mock_t *mock,
+                                                     const qset_can_driver_events_t *events);
 /* Test-only: the next frame the mock returns from receive has its ID and DLC
  * replaced with these raw values, without validation, so tests can simulate a
  * faulty driver delivering an impossible frame. One shot. */
