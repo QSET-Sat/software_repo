@@ -17,7 +17,8 @@ sensor message is not a QSET production message.
   RX/TX, primary/backup channel identity, controller state, normalized driver
   faults, receive timestamps, asynchronous bus-off recovery, and saturating
   RX controller overrun, RX queue overflow, TX queue-full, invalid-frame, and
-  late/duplicate/unexpected response diagnostics.
+  late/duplicate/unexpected response, and suppressed violation report
+  diagnostics.
 - An allocation-free mock controller provides deterministic FIFO loopback,
   manual timestamps, and fault/recovery/overrun/corrupt-frame injection for
   host tests.

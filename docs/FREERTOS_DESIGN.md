@@ -43,6 +43,12 @@ depths, and interrupt rules will be fixed after board selection.
   answered request), or `qset_can_controller_record_unexpected_sequence`
   (anything else). It calls them only from the task that owns correlation.
   These counters stay zero on nodes that do not issue requests.
+- Suppressed protocol violation reports are counted by the transport. The
+  violation reporter and its rate limiter are not built yet; when they are,
+  the reporter calls `qset_can_controller_record_suppressed_violation_report`
+  once for each report it would send but skips because the per
+  reason/offending-ID limit (1 per second) or the global limit (5 per second)
+  is reached. Reports lost to bus-off or a full TX queue are not counted here.
 - Receive items wrap `qset_can_frame_t` with C-only bus-channel and monotonic
   microsecond metadata. The frame type and Rust ABI remain unchanged.
 - Vendor adapters implement a required operations table and translate their

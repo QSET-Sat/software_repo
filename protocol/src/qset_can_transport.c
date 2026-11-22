@@ -358,3 +358,13 @@ qset_can_driver_result_t qset_can_controller_record_unexpected_sequence(
     saturating_add(&controller->diagnostics.unexpected_sequences, 1u);
     return QSET_CAN_DRIVER_OK;
 }
+
+qset_can_driver_result_t qset_can_controller_record_suppressed_violation_report(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.suppressed_violation_reports, 1u);
+    return QSET_CAN_DRIVER_OK;
+}

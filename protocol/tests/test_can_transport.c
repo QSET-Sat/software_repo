@@ -699,6 +699,7 @@ static void test_response_correlation_counters(void)
         assert(diagnostics.rx_queue_overflows == 0u);
         assert(diagnostics.tx_queue_full_failures == 0u);
         assert(diagnostics.invalid_frames == 0u);
+        assert(diagnostics.suppressed_violation_reports == 0u);
 
         /* Saturates instead of wrapping. Seeded directly because reaching the
          * limit one call at a time is impractical. */
@@ -714,6 +715,67 @@ static void test_response_correlation_counters(void)
     }
 }
 
+static void test_suppressed_violation_reports(void)
+{
+    qset_can_controller_t controller = {0};
+    qset_can_mock_t mock = {0};
+    qset_can_diagnostics_t diagnostics;
+    uint32_t index;
+
+    /* Starts at zero, and recording is valid before init. */
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.suppressed_violation_reports == 0u);
+    assert(qset_can_controller_record_suppressed_violation_report(&controller) ==
+           QSET_CAN_DRIVER_OK);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.suppressed_violation_reports == 1u);
+
+    init_and_start(&controller, &mock, QSET_CAN_BUS_PRIMARY);
+
+    /* Each call counts exactly one skipped report. */
+    for (index = 2u; index <= 4u; ++index) {
+        assert(qset_can_controller_record_suppressed_violation_report(&controller) ==
+               QSET_CAN_DRIVER_OK);
+        read_diagnostics(&controller, &diagnostics);
+        assert(diagnostics.suppressed_violation_reports == index);
+    }
+
+    /* Reading does not clear. */
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.suppressed_violation_reports == 4u);
+
+    /* Only this counter moved. */
+    assert(diagnostics.rx_controller_overruns == 0u);
+    assert(diagnostics.rx_queue_overflows == 0u);
+    assert(diagnostics.tx_queue_full_failures == 0u);
+    assert(diagnostics.invalid_frames == 0u);
+    assert(diagnostics.late_responses == 0u);
+    assert(diagnostics.duplicate_responses == 0u);
+    assert(diagnostics.unexpected_sequences == 0u);
+
+    /* Recording an invalid frame does not count as a suppressed report. */
+    assert(qset_can_controller_record_invalid_frame(&controller) == QSET_CAN_DRIVER_OK);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.invalid_frames == 1u);
+    assert(diagnostics.suppressed_violation_reports == 4u);
+
+    /* Saturates instead of wrapping. Seeded directly because reaching the
+     * limit one call at a time is impractical. */
+    controller.diagnostics.suppressed_violation_reports = UINT32_MAX - 1u;
+    assert(qset_can_controller_record_suppressed_violation_report(&controller) ==
+           QSET_CAN_DRIVER_OK);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.suppressed_violation_reports == UINT32_MAX);
+    assert(qset_can_controller_record_suppressed_violation_report(&controller) ==
+           QSET_CAN_DRIVER_OK);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.suppressed_violation_reports == UINT32_MAX);
+    assert(diagnostics.invalid_frames == 1u);
+
+    assert(qset_can_controller_record_suppressed_violation_report(0) ==
+           QSET_CAN_DRIVER_NULL_POINTER);
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -727,6 +789,7 @@ int main(void)
     test_tx_queue_full_failures();
     test_invalid_frames();
     test_response_correlation_counters();
+    test_suppressed_violation_reports();
     puts("Portable C CAN transport: passed");
     return 0;
 }

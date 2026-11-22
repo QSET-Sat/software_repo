@@ -109,6 +109,11 @@ typedef struct {
     uint32_t late_responses;
     uint32_t duplicate_responses;
     uint32_t unexpected_sequences;
+    /* Protocol violation reports this node decided to send but skipped
+     * because the per reason/offending-ID limit (1 per second) or the global
+     * limit (5 per second) was reached. One per skipped report. Reports lost
+     * to bus-off or a full TX queue are not counted here. */
+    uint32_t suppressed_violation_reports;
 } qset_can_diagnostics_t;
 
 /* Statically allocate and zero-initialize this handle before calling init.
@@ -192,6 +197,14 @@ qset_can_driver_result_t qset_can_controller_record_late_response(
 qset_can_driver_result_t qset_can_controller_record_duplicate_response(
     qset_can_controller_t *controller);
 qset_can_driver_result_t qset_can_controller_record_unexpected_sequence(
+    qset_can_controller_t *controller);
+/* Called by the protocol violation reporter once for each report it would send
+ * but skips because the per reason/offending-ID or global rate limit is
+ * reached. Do not call it for violations this node is not responsible for
+ * reporting, or for reports lost to bus-off or a full TX queue. Call from the
+ * task that owns violation reporting only. Nonblocking. Valid before init;
+ * the counter saturates. */
+qset_can_driver_result_t qset_can_controller_record_suppressed_violation_report(
     qset_can_controller_t *controller);
 
 #ifdef __cplusplus
