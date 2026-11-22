@@ -1150,6 +1150,150 @@ static void test_diagnostics_bus_state_and_latest_fault(void)
     assert(diagnostics.latest_driver_fault == QSET_CAN_DRIVER_FAULT_INTERNAL);
 }
 
+/* Stands in for a platform critical section. A write made in enter lands
+ * before the copy; a write made in exit simulates an ISR that was held off by
+ * the masked interrupt and runs right after it is unmasked. */
+typedef struct {
+    qset_can_controller_t *controller;
+    unsigned int enters;
+    unsigned int exits;
+    int inside;
+    int write_on_enter;
+    int write_on_exit;
+} critical_probe_t;
+
+static critical_probe_t *active_probe;
+
+static void probe_enter(void *context)
+{
+    critical_probe_t *probe = (critical_probe_t *)context;
+
+    assert(probe == active_probe);
+    assert(probe->inside == 0);
+    probe->inside = 1;
+    probe->enters++;
+    if (probe->write_on_enter != 0) {
+        assert(qset_can_controller_record_rx_queue_overflow(probe->controller) ==
+               QSET_CAN_DRIVER_OK);
+    }
+}
+
+static void probe_exit(void *context)
+{
+    critical_probe_t *probe = (critical_probe_t *)context;
+
+    assert(probe == active_probe);
+    assert(probe->inside == 1);
+    probe->inside = 0;
+    probe->exits++;
+    if (probe->write_on_exit != 0) {
+        assert(qset_can_controller_record_rx_queue_overflow(probe->controller) ==
+               QSET_CAN_DRIVER_OK);
+    }
+}
+
+/* Driver calls must never happen inside the critical section. */
+static qset_can_driver_result_t checked_get_state(void *context,
+                                                  qset_can_controller_state_t *out_state)
+{
+    assert(active_probe == 0 || active_probe->inside == 0);
+    return qset_can_mock_driver_ops.get_state(context, out_state);
+}
+
+static qset_can_driver_result_t checked_get_last_fault(void *context,
+                                                       qset_can_driver_fault_t *out_fault)
+{
+    assert(active_probe == 0 || active_probe->inside == 0);
+    return qset_can_mock_driver_ops.get_last_fault(context, out_fault);
+}
+
+static void test_consistent_snapshot(void)
+{
+    qset_can_controller_t controller = {0};
+    qset_can_mock_t mock = {0};
+    qset_can_driver_ops_t checked_ops = qset_can_mock_driver_ops;
+    critical_probe_t probe = {0};
+    qset_can_diagnostics_t diagnostics;
+
+    checked_ops.get_state = checked_get_state;
+    checked_ops.get_last_fault = checked_get_last_fault;
+    probe.controller = &controller;
+    active_probe = &probe;
+
+    /* Installing requires both functions or neither. */
+    assert(qset_can_controller_set_critical_section(0, probe_enter, probe_exit, &probe) ==
+           QSET_CAN_DRIVER_NULL_POINTER);
+    assert(qset_can_controller_set_critical_section(&controller, probe_enter, 0, &probe) ==
+           QSET_CAN_DRIVER_INVALID_ARGUMENT);
+    assert(qset_can_controller_set_critical_section(&controller, 0, probe_exit, &probe) ==
+           QSET_CAN_DRIVER_INVALID_ARGUMENT);
+    assert(controller.critical_enter == 0 && controller.critical_exit == 0);
+
+    /* Valid before init: one balanced enter/exit per read. */
+    assert(qset_can_controller_set_critical_section(&controller, probe_enter, probe_exit,
+                                                    &probe) == QSET_CAN_DRIVER_OK);
+    read_diagnostics(&controller, &diagnostics);
+    assert(probe.enters == 1u && probe.exits == 1u && probe.inside == 0);
+
+    /* Init keeps the installed section. */
+    assert(qset_can_controller_init(&controller, &checked_ops, &mock, &primary_config) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_start(&controller) == QSET_CAN_DRIVER_OK);
+    read_diagnostics(&controller, &diagnostics);
+    assert(probe.enters == 2u && probe.exits == 2u);
+    assert(diagnostics.bus_state == QSET_CAN_CONTROLLER_ERROR_ACTIVE);
+
+    /* A write held off until after the copy is not in this snapshot, but it
+     * is not lost: the next snapshot has it. */
+    probe.write_on_exit = 1;
+    read_diagnostics(&controller, &diagnostics);
+    probe.write_on_exit = 0;
+    assert(diagnostics.rx_queue_overflows == 0u);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.rx_queue_overflows == 1u);
+
+    /* A write that lands before the copy is in the snapshot. Together with the
+     * case above, this shows the copy happens between enter and exit. */
+    probe.write_on_enter = 1;
+    read_diagnostics(&controller, &diagnostics);
+    probe.write_on_enter = 0;
+    assert(diagnostics.rx_queue_overflows == 2u);
+
+    /* Reading does not clear, and the section stays balanced. */
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.rx_queue_overflows == 2u);
+    assert(probe.enters == probe.exits && probe.inside == 0);
+
+    /* A failed live read still leaves the section balanced. */
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_GET_STATE,
+                                   QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_FAILURE);
+    assert(probe.enters == probe.exits && probe.inside == 0);
+
+    /* Rejected arguments do not touch the section. */
+    {
+        unsigned int enters = probe.enters;
+
+        assert(qset_can_controller_get_diagnostics(&controller, 0) ==
+               QSET_CAN_DRIVER_NULL_POINTER);
+        assert(probe.enters == enters && probe.exits == enters);
+    }
+
+    /* Removing the section: reads work without it and the probe is unused. */
+    assert(qset_can_controller_set_critical_section(&controller, 0, 0, 0) ==
+           QSET_CAN_DRIVER_OK);
+    {
+        unsigned int enters = probe.enters;
+
+        read_diagnostics(&controller, &diagnostics);
+        assert(diagnostics.rx_queue_overflows == 2u);
+        assert(probe.enters == enters);
+    }
+
+    active_probe = 0;
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -1167,6 +1311,7 @@ int main(void)
     test_controller_error_events();
     test_recovery_attempts_and_failures();
     test_diagnostics_bus_state_and_latest_fault();
+    test_consistent_snapshot();
     puts("Portable C CAN transport: passed");
     return 0;
 }

@@ -158,17 +158,27 @@ typedef struct {
     qset_can_driver_fault_t latest_driver_fault;
 } qset_can_diagnostics_t;
 
+/* Enters or exits a short critical section supplied by the platform, such as a
+ * wrapper around FreeRTOS taskENTER_CRITICAL/taskEXIT_CRITICAL. */
+typedef void (*qset_can_critical_section_fn_t)(void *context);
+
 /* Statically allocate and zero-initialize this handle before calling init.
  * Callers serialize all access; the transport does not provide locking. The
  * exception is qset_can_controller_record_rx_queue_overflow, which is safe to
  * call from the ISR that feeds the RX queue. The TX queue calls
- * qset_can_controller_record_tx_queue_full inside its own serialization. */
+ * qset_can_controller_record_tx_queue_full inside its own serialization.
+ * Diagnostics counters may be written by an ISR or by other tasks while
+ * qset_can_controller_get_diagnostics runs; install a critical section with
+ * qset_can_controller_set_critical_section so its copy is consistent. */
 typedef struct {
     const qset_can_driver_ops_t *ops;
     void *driver_context;
     qset_can_bus_channel_t channel;
     uint32_t nominal_bitrate;
     qset_can_diagnostics_t diagnostics;
+    qset_can_critical_section_fn_t critical_enter;
+    qset_can_critical_section_fn_t critical_exit;
+    void *critical_context;
 } qset_can_controller_t;
 
 /* All calls are nonblocking and leave output objects unchanged on failure.
@@ -200,10 +210,26 @@ qset_can_driver_result_t qset_can_controller_recover_bus_off(
  * latest driver fault, read live through get_state and get_last_fault. Before
  * init it returns zero counters, UNINITIALIZED, and FAULT_NONE. If either live
  * read fails, it returns that error and leaves out_diagnostics unchanged; the
- * counters are kept and can be read on a later call. */
+ * counters are kept and can be read on a later call.
+ * Consistency: when a critical section is installed, all counters are copied
+ * inside one enter/exit pair, so the snapshot never mixes values from before
+ * and after a concurrent write. The live state and fault reads happen after
+ * the exit, so the driver is never called inside the critical section. Call
+ * from task context, not from an ISR. */
 qset_can_driver_result_t qset_can_controller_get_diagnostics(
     const qset_can_controller_t *controller,
     qset_can_diagnostics_t *out_diagnostics);
+/* Installs the critical section the diagnostics getter uses around its counter
+ * copy. Pass both functions to install, or both null to remove. The section
+ * must be nonblocking and must stop every diagnostics writer, including ISRs
+ * and higher-priority tasks (masking interrupts does both on a single core);
+ * a mutex is not enough because ISRs cannot take one. It is held only for a
+ * fixed-size copy. Valid before or after init. Host tests may leave it unset. */
+qset_can_driver_result_t qset_can_controller_set_critical_section(
+    qset_can_controller_t *controller,
+    qset_can_critical_section_fn_t enter_fn,
+    qset_can_critical_section_fn_t exit_fn,
+    void *context);
 /* Called by the RX queue push when the queue is full: the new frame is dropped,
  * already queued frames are kept, and this is called once for that frame.
  * Nonblocking and ISR-safe. Valid before init; the counter saturates. */

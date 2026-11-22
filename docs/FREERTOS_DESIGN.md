@@ -72,6 +72,26 @@ depths, and interrupt rules will be fixed after board selection.
   exception is inside each vendor adapter: `take_events` must read and reset
   its counts atomically with respect to its own ISR, for example by masking
   the CAN interrupt, so no event is lost.
+- The diagnostics snapshot is made consistent by a platform-supplied critical
+  section. Diagnostics counters can be written by the RX ISR and by several
+  tasks while another task reads them, so firmware installs enter/exit
+  functions with `qset_can_controller_set_critical_section`. The getter copies
+  every counter inside one enter/exit pair and reads the live bus state and
+  latest fault from the adapter only after exiting, so the adapter is never
+  called with interrupts masked. The section must be nonblocking and must stop
+  ISRs and higher-priority tasks; a mutex is not enough. On FreeRTOS:
+
+  ```c
+  static void can_diag_enter(void *context) { (void)context; taskENTER_CRITICAL(); }
+  static void can_diag_exit(void *context) { (void)context; taskEXIT_CRITICAL(); }
+
+  qset_can_controller_set_critical_section(&can_primary, can_diag_enter,
+                                           can_diag_exit, 0);
+  ```
+
+  It is held only for a fixed-size copy. Host tests may leave it unset. Each
+  counter is a naturally aligned 32-bit word, written whole by its single
+  owner, so writers need no extra locking.
 
 ## Ownership and data flow
 

@@ -316,7 +316,15 @@ qset_can_driver_result_t qset_can_controller_get_diagnostics(
     if (controller == 0 || out_diagnostics == 0) {
         return QSET_CAN_DRIVER_NULL_POINTER;
     }
+    /* Copy every counter inside one critical section so the snapshot is
+     * consistent. Driver calls stay outside it. */
+    if (controller->critical_enter != 0) {
+        controller->critical_enter(controller->critical_context);
+    }
     snapshot = controller->diagnostics;
+    if (controller->critical_exit != 0) {
+        controller->critical_exit(controller->critical_context);
+    }
     snapshot.bus_state = QSET_CAN_CONTROLLER_UNINITIALIZED;
     snapshot.latest_driver_fault = QSET_CAN_DRIVER_FAULT_NONE;
     if (controller->ops != 0) {
@@ -400,5 +408,23 @@ qset_can_driver_result_t qset_can_controller_record_suppressed_violation_report(
         return QSET_CAN_DRIVER_NULL_POINTER;
     }
     saturating_add(&controller->diagnostics.suppressed_violation_reports, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_set_critical_section(
+    qset_can_controller_t *controller,
+    qset_can_critical_section_fn_t enter_fn,
+    qset_can_critical_section_fn_t exit_fn,
+    void *context)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    if ((enter_fn == 0) != (exit_fn == 0)) {
+        return QSET_CAN_DRIVER_INVALID_ARGUMENT;
+    }
+    controller->critical_enter = enter_fn;
+    controller->critical_exit = exit_fn;
+    controller->critical_context = (enter_fn == 0) ? 0 : context;
     return QSET_CAN_DRIVER_OK;
 }

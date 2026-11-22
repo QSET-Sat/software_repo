@@ -315,6 +315,11 @@ periodic state.
   driver on every call rather than storing copies, so they are never stale. If
   either read fails, the getter returns that error and its output is
   unchanged; counters are never lost and can be read on a later call.
+- Snapshot consistency comes from an optional platform critical section
+  installed on the controller. The getter copies all counters inside it, and
+  calls the driver for live values only outside it. The portable transport
+  stays free of RTOS calls; firmware supplies the section (for example
+  `taskENTER_CRITICAL`), and host tests may run without one.
 - Reading does not clear counters. Counters reset only with the processor or a
   future explicit maintenance operation.
 - Version 1 transmits only aggregate active-fault count; detailed diagnostic
