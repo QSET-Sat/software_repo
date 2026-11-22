@@ -151,6 +151,11 @@ static qset_can_driver_result_t mock_receive(void *context,
     }
 
     *out_frame = mock->queue[mock->queue_head].frame;
+    if (mock->corrupt_pending != 0u) {
+        mock->corrupt_pending = 0u;
+        out_frame->id = mock->corrupt_id;
+        out_frame->dlc = mock->corrupt_dlc;
+    }
     *out_timestamp_us = mock->queue[mock->queue_head].timestamp_us;
     mock->queue_head = (uint8_t)((mock->queue_head + 1u) % QSET_CAN_MOCK_QUEUE_CAPACITY);
     mock->queue_count--;
@@ -350,6 +355,25 @@ qset_can_driver_result_t qset_can_mock_inject_rx_overruns(qset_can_mock_t *mock,
     } else {
         mock->pending_rx_overruns += count;
     }
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_mock_corrupt_next_receive(qset_can_mock_t *mock,
+                                                            uint16_t id,
+                                                            uint8_t dlc)
+{
+    if (mock == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    if (mock->initialized == 0u) {
+        return QSET_CAN_DRIVER_INVALID_STATE;
+    }
+    if (mock->corrupt_pending != 0u) {
+        return QSET_CAN_DRIVER_BUSY;
+    }
+    mock->corrupt_id = id;
+    mock->corrupt_dlc = dlc;
+    mock->corrupt_pending = 1u;
     return QSET_CAN_DRIVER_OK;
 }
 

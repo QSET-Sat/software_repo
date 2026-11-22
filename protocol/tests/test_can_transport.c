@@ -528,6 +528,109 @@ static void test_tx_queue_full_failures(void)
     assert(qset_can_controller_record_tx_queue_full(0) == QSET_CAN_DRIVER_NULL_POINTER);
 }
 
+static void test_invalid_frames(void)
+{
+    qset_can_controller_t controller = {0};
+    qset_can_mock_t mock = {0};
+    qset_can_frame_t frame = make_frame(0x404u, 0x60u);
+    qset_can_frame_t bad_frame = frame;
+    qset_can_rx_item_t item;
+    qset_can_rx_item_t unchanged;
+    qset_can_diagnostics_t diagnostics = {.invalid_frames = 99u};
+
+    /* Starts at zero; recording is valid before init; mock needs init. */
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 0u);
+    assert(qset_can_controller_record_invalid_frame(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 1u);
+    assert(qset_can_mock_corrupt_next_receive(&mock, 0x800u, QSET_CAN_MAX_DLC) ==
+           QSET_CAN_DRIVER_INVALID_STATE);
+
+    init_and_start(&controller, &mock, QSET_CAN_BUS_PRIMARY);
+
+    /* A driver frame with an impossible ID is discarded and counted. */
+    assert(qset_can_controller_transmit(&controller, &frame) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_corrupt_next_receive(&mock, 0x800u, QSET_CAN_MAX_DLC) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_corrupt_next_receive(&mock, 0x800u, QSET_CAN_MAX_DLC) ==
+           QSET_CAN_DRIVER_BUSY);
+    memset(&item, 0x6b, sizeof(item));
+    unchanged = item;
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_FAILURE);
+    assert(memcmp(&item, &unchanged, sizeof(item)) == 0);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 2u);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+
+    /* A driver frame with an impossible DLC is discarded and counted. */
+    assert(qset_can_controller_transmit(&controller, &frame) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_corrupt_next_receive(&mock, frame.id, 9u) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_FAILURE);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 3u);
+
+    /* Valid frames, including the highest valid ID and DLC, are not counted. */
+    frame.id = QSET_CAN_MAX_STANDARD_ID;
+    assert(qset_can_controller_transmit(&controller, &frame) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_OK);
+    assert(item.frame.id == QSET_CAN_MAX_STANDARD_ID);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 3u);
+
+    /* Invalid frames passed to transmit are a caller error, not counted. */
+    bad_frame.id = 0x800u;
+    assert(qset_can_controller_transmit(&controller, &bad_frame) ==
+           QSET_CAN_DRIVER_INVALID_ARGUMENT);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 3u);
+
+    /* Protocol-level rejections reported by the RX task count one per call. */
+    assert(qset_can_controller_record_invalid_frame(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 4u);
+
+    /* Reading does not clear, and other counters are unaffected. */
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 4u);
+    assert(diagnostics.rx_controller_overruns == 0u);
+    assert(diagnostics.rx_queue_overflows == 0u);
+    assert(diagnostics.tx_queue_full_failures == 0u);
+    assert(qset_can_controller_record_tx_queue_full(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == 4u);
+
+    /* Saturates instead of wrapping, from both the record call and receive.
+     * Seeded directly because reaching the limit one call at a time is
+     * impractical. */
+    controller.diagnostics.invalid_frames = UINT32_MAX - 1u;
+    assert(qset_can_controller_record_invalid_frame(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == UINT32_MAX);
+    assert(qset_can_controller_record_invalid_frame(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_transmit(&controller, &frame) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_corrupt_next_receive(&mock, 0x800u, QSET_CAN_MAX_DLC) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_FAILURE);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.invalid_frames == UINT32_MAX);
+
+    assert(qset_can_controller_record_invalid_frame(0) == QSET_CAN_DRIVER_NULL_POINTER);
+    assert(qset_can_mock_corrupt_next_receive(0, 0x800u, 0u) ==
+           QSET_CAN_DRIVER_NULL_POINTER);
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -539,6 +642,7 @@ int main(void)
     test_rx_controller_overruns();
     test_rx_queue_overflows();
     test_tx_queue_full_failures();
+    test_invalid_frames();
     puts("Portable C CAN transport: passed");
     return 0;
 }

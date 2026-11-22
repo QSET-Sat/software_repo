@@ -42,6 +42,9 @@ typedef struct {
     qset_can_driver_fault_t failure_fault;
     uint8_t queue_head;
     uint8_t queue_count;
+    uint16_t corrupt_id;
+    uint8_t corrupt_dlc;
+    uint8_t corrupt_pending;
     uint8_t initialized;
     uint8_t failure_pending;
 } qset_can_mock_t;
@@ -60,6 +63,12 @@ qset_can_driver_result_t qset_can_mock_latch_fault(qset_can_mock_t *mock,
  * count saturates at UINT32_MAX until the transport takes it. */
 qset_can_driver_result_t qset_can_mock_inject_rx_overruns(qset_can_mock_t *mock,
                                                           uint32_t count);
+/* Test-only: the next frame the mock returns from receive has its ID and DLC
+ * replaced with these raw values, without validation, so tests can simulate a
+ * faulty driver delivering an impossible frame. One shot. */
+qset_can_driver_result_t qset_can_mock_corrupt_next_receive(qset_can_mock_t *mock,
+                                                            uint16_t id,
+                                                            uint8_t dlc);
 qset_can_driver_result_t qset_can_mock_fail_next(qset_can_mock_t *mock,
                                                  qset_can_mock_operation_t operation,
                                                  qset_can_driver_fault_t fault);

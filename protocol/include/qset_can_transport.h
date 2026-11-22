@@ -93,6 +93,13 @@ typedef struct {
     uint32_t rx_queue_overflows;
     /* Send requests refused because the TX queue was full. One per refusal. */
     uint32_t tx_queue_full_failures;
+    /* Received frames discarded as invalid, one per frame. Counts frames with
+     * an impossible Classic CAN shape (ID above 0x7FF or DLC above 8), which
+     * receive drops automatically, and frames the protocol layer rejects,
+     * reported through qset_can_controller_record_invalid_frame. A frame is
+     * counted at only one of those levels. Frames rejected by hardware
+     * acceptance filters and invalid frames passed to transmit are not counted. */
+    uint32_t invalid_frames;
 } qset_can_diagnostics_t;
 
 /* Statically allocate and zero-initialize this handle before calling init.
@@ -151,6 +158,14 @@ qset_can_driver_result_t qset_can_controller_record_rx_queue_overflow(
  * the controller busy, because that is a normal wait, not a refused send.
  * Nonblocking. Valid before init; the counter saturates. */
 qset_can_driver_result_t qset_can_controller_record_tx_queue_full(
+    qset_can_controller_t *controller);
+/* Called by the RX task once for each received frame that protocol validation
+ * rejects (for example an unassigned ID, unregistered node, wrong DLC for the
+ * message, or invalid payload value). Receive already counts frames with an
+ * impossible shape, so do not call this for frames receive rejected. Call it
+ * from the RX task only. Nonblocking. Valid before init; the counter
+ * saturates. */
+qset_can_driver_result_t qset_can_controller_record_invalid_frame(
     qset_can_controller_t *controller);
 
 #ifdef __cplusplus

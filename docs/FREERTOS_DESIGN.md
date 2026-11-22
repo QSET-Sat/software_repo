@@ -28,6 +28,12 @@ depths, and interrupt rules will be fixed after board selection.
   tasks may send, so the call must be made inside the same lock or critical
   section the queue uses to check for full. A busy controller seen by the TX
   task is a normal wait and is not counted.
+- Invalid received frames are counted once each, at whichever level rejects
+  them. Receive automatically discards and counts driver frames with an
+  impossible Classic CAN shape (ID above `0x7FF` or DLC above 8). The future RX
+  task must call `qset_can_controller_record_invalid_frame` once for each frame
+  that protocol validation rejects. Frames removed by hardware acceptance
+  filters, and invalid frames passed to transmit, are not counted.
 - Receive items wrap `qset_can_frame_t` with C-only bus-channel and monotonic
   microsecond metadata. The frame type and Rust ABI remain unchanged.
 - Vendor adapters implement a required operations table and translate their
