@@ -67,6 +67,9 @@ typedef struct {
  * - bus_off_events: entries into BUS_OFF from ERROR_ACTIVE, ERROR_WARNING,
  *   or ERROR_PASSIVE. A recovery attempt that ends back in BUS_OFF is a
  *   recovery failure, not a new bus-off event.
+ * - recovery_failures: accepted recovery attempts that ended back in BUS_OFF
+ *   (RECOVERING to BUS_OFF). Do not count a recover_bus_off call the driver
+ *   rejected with an error; the transport counts that one itself.
  * One transition counts once, for the state entered. Moves toward a healthier
  * state are not counted. */
 typedef struct {
@@ -74,6 +77,7 @@ typedef struct {
     uint32_t warning_events;
     uint32_t passive_events;
     uint32_t bus_off_events;
+    uint32_t recovery_failures;
 } qset_can_driver_events_t;
 
 /* Every callback is required. Implementations map vendor-specific failures to
@@ -114,6 +118,14 @@ typedef struct {
     uint32_t controller_warning_events;
     uint32_t controller_passive_events;
     uint32_t bus_off_events;
+    /* Bus-off recovery. Attempts: recover_bus_off calls that reached the
+     * driver (the controller was BUS_OFF). Failures: attempts the driver
+     * rejected immediately, counted by the transport, plus accepted attempts
+     * that later ended back in BUS_OFF, counted by the driver. Calls rejected
+     * before reaching the driver (wrong state, state read error) count as
+     * neither. */
+    uint32_t recovery_attempts;
+    uint32_t recovery_failures;
     /* Received frames dropped because the RX queue was full. One per frame. */
     uint32_t rx_queue_overflows;
     /* Send requests refused because the TX queue was full. One per refusal. */

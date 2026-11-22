@@ -292,7 +292,7 @@ static qset_can_driver_result_t mock_take_events(void *context,
 {
     qset_can_mock_t *mock = (qset_can_mock_t *)context;
     qset_can_driver_result_t result;
-    const qset_can_driver_events_t cleared = {0u, 0u, 0u, 0u};
+    const qset_can_driver_events_t cleared = {0u, 0u, 0u, 0u, 0u};
 
     if (mock == 0 || out_events == 0) {
         return QSET_CAN_DRIVER_NULL_POINTER;
@@ -401,6 +401,7 @@ qset_can_driver_result_t qset_can_mock_inject_events(qset_can_mock_t *mock,
     mock_saturating_add(&mock->pending_events.warning_events, events->warning_events);
     mock_saturating_add(&mock->pending_events.passive_events, events->passive_events);
     mock_saturating_add(&mock->pending_events.bus_off_events, events->bus_off_events);
+    mock_saturating_add(&mock->pending_events.recovery_failures, events->recovery_failures);
     return QSET_CAN_DRIVER_OK;
 }
 
@@ -460,8 +461,10 @@ qset_can_driver_result_t qset_can_mock_complete_recovery(
     if (outcome_fault == QSET_CAN_DRIVER_FAULT_NONE) {
         mock->state = QSET_CAN_CONTROLLER_ERROR_ACTIVE;
     } else {
+        /* A failed recovery, not a new bus-off event. */
         mock->last_fault = outcome_fault;
         mock->state = QSET_CAN_CONTROLLER_BUS_OFF;
+        mock_saturating_add(&mock->pending_events.recovery_failures, 1u);
     }
     return QSET_CAN_DRIVER_OK;
 }

@@ -77,7 +77,8 @@ qset_can_driver_result_t qset_can_mock_fail_next(qset_can_mock_t *mock,
                                                  qset_can_mock_operation_t operation,
                                                  qset_can_driver_fault_t fault);
 /* NONE completes successfully into ERROR_ACTIVE. Any other valid fault records
- * a failed recovery and returns the mock to BUS_OFF. */
+ * a failed recovery, returns the mock to BUS_OFF, and counts one
+ * recovery_failures event (not a bus-off event). */
 qset_can_driver_result_t qset_can_mock_complete_recovery(
     qset_can_mock_t *mock,
     qset_can_driver_fault_t outcome_fault);

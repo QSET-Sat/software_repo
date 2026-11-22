@@ -304,6 +304,12 @@ periodic state.
   that omit it. The transport does not count state changes by polling the
   controller state, because episodes shorter than the poll interval would be
   missed.
+- Bus-off recovery attempts are counted by the transport when a recovery
+  request reaches the driver. Failures are counted by the transport when the
+  driver rejects the request, and by the driver, as a controller event, when an
+  accepted attempt ends back in bus-off. That failure is not a new bus-off
+  event. Polling cannot distinguish a failed recovery from a successful one
+  followed quickly by a new bus-off, so the driver reports it.
 - Reading does not clear counters. Counters reset only with the processor or a
   future explicit maintenance operation.
 - Version 1 transmits only aggregate active-fault count; detailed diagnostic

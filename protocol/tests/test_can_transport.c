@@ -810,8 +810,8 @@ static void test_controller_error_events(void)
     qset_can_frame_t frame = make_frame(0x405u, 0x70u);
     qset_can_diagnostics_t diagnostics;
     qset_can_driver_events_t events = {0};
-    const qset_can_driver_events_t one_each = {1u, 1u, 1u, 1u};
-    const qset_can_driver_events_t max_each = {0u, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+    const qset_can_driver_events_t one_each = {1u, 1u, 1u, 1u, 0u};
+    const qset_can_driver_events_t max_each = {0u, UINT32_MAX, UINT32_MAX, UINT32_MAX, 0u};
 
     read_diagnostics(&controller, &diagnostics);
     assert(diagnostics.controller_warning_events == 0u);
@@ -915,6 +915,133 @@ static void test_controller_error_events(void)
     assert(qset_can_mock_inject_events(&mock, 0) == QSET_CAN_DRIVER_NULL_POINTER);
 }
 
+static void expect_recovery(const qset_can_controller_t *controller,
+                            uint32_t attempts,
+                            uint32_t failures)
+{
+    qset_can_diagnostics_t diagnostics;
+
+    read_diagnostics(controller, &diagnostics);
+    assert(diagnostics.recovery_attempts == attempts);
+    assert(diagnostics.recovery_failures == failures);
+}
+
+/* Receive with nothing waiting, so pending driver events are collected. */
+static void collect_pending(qset_can_controller_t *controller)
+{
+    qset_can_rx_item_t item;
+
+    assert(qset_can_controller_receive(controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+}
+
+static void test_recovery_attempts_and_failures(void)
+{
+    qset_can_controller_t controller = {0};
+    qset_can_mock_t mock = {0};
+    qset_can_diagnostics_t diagnostics;
+    qset_can_controller_state_t state;
+    qset_can_driver_events_t events = {0};
+
+    /* Starts at zero; a request before init is not an attempt. */
+    expect_recovery(&controller, 0u, 0u);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_INVALID_STATE);
+    expect_recovery(&controller, 0u, 0u);
+
+    init_and_start(&controller, &mock, QSET_CAN_BUS_PRIMARY);
+
+    /* Requests outside bus-off never reach the driver and are not attempts. */
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_INVALID_STATE);
+    expect_recovery(&controller, 0u, 0u);
+
+    /* A successful recovery is one attempt and no failure. */
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_BUS_OFF) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_OK);
+    expect_recovery(&controller, 1u, 0u);
+    /* A second request while recovering is not an attempt. */
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_INVALID_STATE);
+    expect_recovery(&controller, 1u, 0u);
+    assert(qset_can_mock_complete_recovery(&mock, QSET_CAN_DRIVER_FAULT_NONE) ==
+           QSET_CAN_DRIVER_OK);
+    collect_pending(&controller);
+    expect_recovery(&controller, 1u, 0u);
+
+    /* An accepted attempt that ends back in bus-off is a failure, counted by
+     * the driver and collected on receive, and is not a new bus-off event. */
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_BUS_OFF) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_complete_recovery(&mock, QSET_CAN_DRIVER_FAULT_HARDWARE) ==
+           QSET_CAN_DRIVER_OK);
+    expect_recovery(&controller, 2u, 0u);
+    collect_pending(&controller);
+    expect_recovery(&controller, 2u, 1u);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.bus_off_events == 2u);
+
+    /* A request the driver rejects immediately is an attempt and a failure,
+     * counted by the transport at once; the controller stays in bus-off. */
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_RECOVER_BUS_OFF,
+                                   QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_FAILURE);
+    expect_recovery(&controller, 3u, 2u);
+    assert(qset_can_controller_get_state(&controller, &state) == QSET_CAN_DRIVER_OK);
+    assert(state == QSET_CAN_CONTROLLER_BUS_OFF);
+    collect_pending(&controller);
+    expect_recovery(&controller, 3u, 2u);
+
+    /* A state read failure stops the request before the driver: not an attempt. */
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_GET_STATE,
+                                   QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_FAILURE);
+    expect_recovery(&controller, 3u, 2u);
+
+    /* Repeated failed attempts keep counting, then a success adds no failure. */
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_complete_recovery(&mock, QSET_CAN_DRIVER_FAULT_HARDWARE) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_complete_recovery(&mock, QSET_CAN_DRIVER_FAULT_NONE) ==
+           QSET_CAN_DRIVER_OK);
+    collect_pending(&controller);
+    expect_recovery(&controller, 5u, 3u);
+
+    /* Reading does not clear, and unrelated counters are unaffected. */
+    expect_recovery(&controller, 5u, 3u);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.rx_controller_overruns == 0u);
+    assert(diagnostics.controller_warning_events == 0u);
+    assert(diagnostics.controller_passive_events == 0u);
+    assert(diagnostics.bus_off_events == 2u);
+    assert(diagnostics.rx_queue_overflows == 0u);
+    assert(diagnostics.tx_queue_full_failures == 0u);
+    assert(diagnostics.invalid_frames == 0u);
+    assert(diagnostics.late_responses == 0u);
+    assert(diagnostics.duplicate_responses == 0u);
+    assert(diagnostics.unexpected_sequences == 0u);
+    assert(diagnostics.suppressed_violation_reports == 0u);
+
+    /* Both counters saturate: attempts from the transport (seeded directly,
+     * since counting to the limit is impractical) and failures from both the
+     * driver-reported and the transport-counted paths. */
+    controller.diagnostics.recovery_attempts = UINT32_MAX - 1u;
+    events.recovery_failures = UINT32_MAX;
+    assert(qset_can_mock_inject_events(&mock, &events) == QSET_CAN_DRIVER_OK);
+    collect_pending(&controller);
+    expect_recovery(&controller, UINT32_MAX - 1u, UINT32_MAX);
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_BUS_OFF) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_RECOVER_BUS_OFF,
+                                   QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_FAILURE);
+    expect_recovery(&controller, UINT32_MAX, UINT32_MAX);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_mock_complete_recovery(&mock, QSET_CAN_DRIVER_FAULT_HARDWARE) ==
+           QSET_CAN_DRIVER_OK);
+    collect_pending(&controller);
+    expect_recovery(&controller, UINT32_MAX, UINT32_MAX);
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -930,6 +1057,7 @@ int main(void)
     test_response_correlation_counters();
     test_suppressed_violation_reports();
     test_controller_error_events();
+    test_recovery_attempts_and_failures();
     puts("Portable C CAN transport: passed");
     return 0;
 }

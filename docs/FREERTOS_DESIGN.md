@@ -12,13 +12,18 @@ depths, and interrupt rules will be fixed after board selection.
   start/stop, raw RX/TX, controller-state and latest-fault queries, an
   asynchronous bus-off recovery request, and a diagnostics getter.
 - Controller events (RX overruns, entries into error-warning, error-passive,
-  and bus-off) are counted by the vendor adapter and collected by the
-  transport. The adapter increments its own saturating counts, normally in its
-  ISR, and implements `take_events`, which returns and resets all of them in
-  one step. The transport calls it on every receive and adds the results to
-  its saturating `rx_controller_overruns`, `controller_warning_events`,
-  `controller_passive_events`, and `bus_off_events` counters. Reading
-  diagnostics never clears them.
+  and bus-off, and failed bus-off recoveries) are counted by the vendor
+  adapter and collected by the transport. The adapter increments its own
+  saturating counts, normally in its ISR, and implements `take_events`, which
+  returns and resets all of them in one step. The transport calls it on every
+  receive and adds the results to its saturating `rx_controller_overruns`,
+  `controller_warning_events`, `controller_passive_events`, `bus_off_events`,
+  and `recovery_failures` counters. Reading diagnostics never clears them.
+- Bus-off recovery attempts are counted by the transport: every
+  `qset_can_controller_recover_bus_off` call that reaches the driver adds one
+  to `recovery_attempts`. If the driver rejects the request immediately, the
+  transport also adds one to `recovery_failures`. An accepted attempt that
+  later ends back in bus-off is counted by the adapter as a recovery failure.
 - RX queue overflows are counted by the transport. The RX queue is not built
   yet; when it is, its push must drop the new frame when the queue is full and
   call `qset_can_controller_record_rx_queue_overflow` once for that frame. The
@@ -105,6 +110,10 @@ includes or writes transport diagnostics. The events are:
   error-active or error-warning.
 - **Bus-off:** the transmit error count exceeded 255 while the controller was
   running, so it removed itself from the bus.
+- **Recovery failure:** a recovery attempt the adapter accepted (the
+  controller went to recovering) ended back in bus-off instead of
+  error-active. If `recover_bus_off` itself returns an error, do not count it
+  here; the transport counts that failure.
 
 What the adapter must do:
 
@@ -141,6 +150,8 @@ or vendor HAL calls:
 typedef struct {
     /* volatile: written by the ISR, read by task code. */
     volatile qset_can_driver_events_t events;
+    /* Set by recover_bus_off when the controller accepts a recovery request. */
+    volatile uint8_t recovering;
     /* ...other adapter state... */
 } board_can_context_t;
 
@@ -167,8 +178,17 @@ static void board_can_handle_events(board_can_context_t *ctx)
         board_can_clear_passive_flag();
     }
     if (board_can_entered_bus_off()) {
-        board_can_count(&ctx->events.bus_off_events);
+        if (ctx->recovering) {
+            /* Back in bus-off during a recovery attempt: a failure. */
+            board_can_count(&ctx->events.recovery_failures);
+            ctx->recovering = 0u;
+        } else {
+            board_can_count(&ctx->events.bus_off_events);
+        }
         board_can_clear_bus_off_flag();
+    }
+    if (ctx->recovering && board_can_rejoined_bus()) {
+        ctx->recovering = 0u;
     }
 }
 
@@ -187,10 +207,12 @@ static qset_can_driver_result_t board_can_take_events(void *context,
     taken.warning_events = ctx->events.warning_events;
     taken.passive_events = ctx->events.passive_events;
     taken.bus_off_events = ctx->events.bus_off_events;
+    taken.recovery_failures = ctx->events.recovery_failures;
     ctx->events.rx_overruns = 0u;
     ctx->events.warning_events = 0u;
     ctx->events.passive_events = 0u;
     ctx->events.bus_off_events = 0u;
+    ctx->events.recovery_failures = 0u;
     board_can_unmask_interrupt();
 
     *out_events = taken;

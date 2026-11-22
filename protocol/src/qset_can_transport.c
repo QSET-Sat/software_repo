@@ -51,7 +51,7 @@ static void saturating_add(uint32_t *counter, uint32_t amount)
 /* A failed take adds nothing; the driver keeps its counts for the next call. */
 static void collect_events(qset_can_controller_t *controller)
 {
-    qset_can_driver_events_t events = {0u, 0u, 0u, 0u};
+    qset_can_driver_events_t events = {0u, 0u, 0u, 0u, 0u};
     qset_can_diagnostics_t *diagnostics = &controller->diagnostics;
     qset_can_driver_result_t result = normalize_result(
         controller->ops->take_events(controller->driver_context, &events));
@@ -63,6 +63,7 @@ static void collect_events(qset_can_controller_t *controller)
     saturating_add(&diagnostics->controller_warning_events, events.warning_events);
     saturating_add(&diagnostics->controller_passive_events, events.passive_events);
     saturating_add(&diagnostics->bus_off_events, events.bus_off_events);
+    saturating_add(&diagnostics->recovery_failures, events.recovery_failures);
 }
 
 static qset_can_driver_result_t read_state(const qset_can_controller_t *controller,
@@ -290,7 +291,14 @@ qset_can_driver_result_t qset_can_controller_recover_bus_off(
     if (state != QSET_CAN_CONTROLLER_BUS_OFF) {
         return QSET_CAN_DRIVER_INVALID_STATE;
     }
-    return normalize_result(controller->ops->recover_bus_off(controller->driver_context));
+    /* Reaching the driver is an attempt. An immediate error is a failure; an
+     * accepted attempt that later fails is counted by the driver. */
+    saturating_add(&controller->diagnostics.recovery_attempts, 1u);
+    result = normalize_result(controller->ops->recover_bus_off(controller->driver_context));
+    if (result != QSET_CAN_DRIVER_OK) {
+        saturating_add(&controller->diagnostics.recovery_failures, 1u);
+    }
+    return result;
 }
 
 qset_can_driver_result_t qset_can_controller_get_diagnostics(
