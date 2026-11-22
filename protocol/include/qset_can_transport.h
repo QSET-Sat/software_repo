@@ -151,6 +151,11 @@ typedef struct {
      * limit (5 per second) was reached. One per skipped report. Reports lost
      * to bus-off or a full TX queue are not counted here. */
     uint32_t suppressed_violation_reports;
+    /* Filled by qset_can_controller_get_diagnostics with live values read
+     * from the driver at the time of the call; not stored by the transport.
+     * Before init they read UNINITIALIZED and FAULT_NONE. */
+    qset_can_controller_state_t bus_state;
+    qset_can_driver_fault_t latest_driver_fault;
 } qset_can_diagnostics_t;
 
 /* Statically allocate and zero-initialize this handle before calling init.
@@ -190,10 +195,12 @@ qset_can_driver_result_t qset_can_controller_get_last_fault(
 qset_can_driver_result_t qset_can_controller_recover_bus_off(
     qset_can_controller_t *controller);
 /* Receive collects pending controller events from the driver before reading a
- * frame,
- * including when it then returns NO_DATA or another error. This getter copies
- * the collected values without clearing them. It is valid before init and
- * returns zeros then. */
+ * frame, including when it then returns NO_DATA or another error. This getter
+ * copies the counters without clearing them and adds the current bus state and
+ * latest driver fault, read live through get_state and get_last_fault. Before
+ * init it returns zero counters, UNINITIALIZED, and FAULT_NONE. If either live
+ * read fails, it returns that error and leaves out_diagnostics unchanged; the
+ * counters are kept and can be read on a later call. */
 qset_can_driver_result_t qset_can_controller_get_diagnostics(
     const qset_can_controller_t *controller,
     qset_can_diagnostics_t *out_diagnostics);

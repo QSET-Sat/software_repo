@@ -10,7 +10,9 @@ depths, and interrupt rules will be fixed after board selection.
 - `qset_can_transport.h` defines allocation-free controller instances bound to
   either the primary or backup bus. It exposes nonblocking initialization,
   start/stop, raw RX/TX, controller-state and latest-fault queries, an
-  asynchronous bus-off recovery request, and a diagnostics getter.
+  asynchronous bus-off recovery request, and a diagnostics getter. The getter
+  returns every counter together with the current bus state and latest driver
+  fault, which it reads live from the adapter on each call.
 - Controller events (RX overruns, entries into error-warning, error-passive,
   and bus-off, and failed bus-off recoveries) are counted by the vendor
   adapter and collected by the transport. The adapter increments its own

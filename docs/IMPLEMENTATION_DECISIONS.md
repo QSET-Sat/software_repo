@@ -310,6 +310,11 @@ periodic state.
   accepted attempt ends back in bus-off. That failure is not a new bus-off
   event. Polling cannot distinguish a failed recovery from a successful one
   followed quickly by a new bus-off, so the driver reports it.
+- The diagnostics snapshot includes the current bus state and the latest
+  driver fault (`qset_can_driver_fault_t`). The getter reads both live from the
+  driver on every call rather than storing copies, so they are never stale. If
+  either read fails, the getter returns that error and its output is
+  unchanged; counters are never lost and can be read on a later call.
 - Reading does not clear counters. Counters reset only with the processor or a
   future explicit maintenance operation.
 - Version 1 transmits only aggregate active-fault count; detailed diagnostic

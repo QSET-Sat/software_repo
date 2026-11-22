@@ -247,21 +247,13 @@ qset_can_driver_result_t qset_can_controller_get_state(
     return QSET_CAN_DRIVER_OK;
 }
 
-qset_can_driver_result_t qset_can_controller_get_last_fault(
-    const qset_can_controller_t *controller,
-    qset_can_driver_fault_t *out_fault)
+static qset_can_driver_result_t read_fault(const qset_can_controller_t *controller,
+                                           qset_can_driver_fault_t *out_fault)
 {
-    qset_can_driver_fault_t fault;
-    qset_can_driver_result_t result;
-
-    if (controller == 0 || out_fault == 0) {
-        return QSET_CAN_DRIVER_NULL_POINTER;
-    }
-    if (controller->ops == 0) {
-        return QSET_CAN_DRIVER_INVALID_STATE;
-    }
-    result = normalize_result(
+    qset_can_driver_fault_t fault = QSET_CAN_DRIVER_FAULT_NONE;
+    qset_can_driver_result_t result = normalize_result(
         controller->ops->get_last_fault(controller->driver_context, &fault));
+
     if (result != QSET_CAN_DRIVER_OK) {
         return result;
     }
@@ -270,6 +262,19 @@ qset_can_driver_result_t qset_can_controller_get_last_fault(
     }
     *out_fault = fault;
     return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_get_last_fault(
+    const qset_can_controller_t *controller,
+    qset_can_driver_fault_t *out_fault)
+{
+    if (controller == 0 || out_fault == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    if (controller->ops == 0) {
+        return QSET_CAN_DRIVER_INVALID_STATE;
+    }
+    return read_fault(controller, out_fault);
 }
 
 qset_can_driver_result_t qset_can_controller_recover_bus_off(
@@ -305,10 +310,26 @@ qset_can_driver_result_t qset_can_controller_get_diagnostics(
     const qset_can_controller_t *controller,
     qset_can_diagnostics_t *out_diagnostics)
 {
+    qset_can_diagnostics_t snapshot;
+    qset_can_driver_result_t result;
+
     if (controller == 0 || out_diagnostics == 0) {
         return QSET_CAN_DRIVER_NULL_POINTER;
     }
-    *out_diagnostics = controller->diagnostics;
+    snapshot = controller->diagnostics;
+    snapshot.bus_state = QSET_CAN_CONTROLLER_UNINITIALIZED;
+    snapshot.latest_driver_fault = QSET_CAN_DRIVER_FAULT_NONE;
+    if (controller->ops != 0) {
+        result = read_state(controller, &snapshot.bus_state);
+        if (result != QSET_CAN_DRIVER_OK) {
+            return result;
+        }
+        result = read_fault(controller, &snapshot.latest_driver_fault);
+        if (result != QSET_CAN_DRIVER_OK) {
+            return result;
+        }
+    }
+    *out_diagnostics = snapshot;
     return QSET_CAN_DRIVER_OK;
 }
 

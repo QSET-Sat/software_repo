@@ -1042,6 +1042,114 @@ static void test_recovery_attempts_and_failures(void)
     expect_recovery(&controller, UINT32_MAX, UINT32_MAX);
 }
 
+static void expect_state_and_fault(const qset_can_controller_t *controller,
+                                   qset_can_controller_state_t state,
+                                   qset_can_driver_fault_t fault)
+{
+    qset_can_diagnostics_t diagnostics;
+
+    read_diagnostics(controller, &diagnostics);
+    assert(diagnostics.bus_state == state);
+    assert(diagnostics.latest_driver_fault == fault);
+}
+
+static void test_diagnostics_bus_state_and_latest_fault(void)
+{
+    qset_can_controller_t controller = {0};
+    qset_can_mock_t mock = {0};
+    qset_can_frame_t frame = make_frame(0x406u, 0x80u);
+    qset_can_diagnostics_t diagnostics;
+    qset_can_diagnostics_t unchanged;
+
+    /* Before init: no driver to ask. */
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_UNINITIALIZED,
+                           QSET_CAN_DRIVER_FAULT_NONE);
+
+    assert(qset_can_controller_init(&controller, &qset_can_mock_driver_ops, &mock,
+                                    &primary_config) == QSET_CAN_DRIVER_OK);
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_STOPPED,
+                           QSET_CAN_DRIVER_FAULT_NONE);
+
+    /* The state is live: every change shows on the next read, with no
+     * receive needed in between. */
+    assert(qset_can_controller_start(&controller) == QSET_CAN_DRIVER_OK);
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_ERROR_ACTIVE,
+                           QSET_CAN_DRIVER_FAULT_NONE);
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_WARNING) ==
+           QSET_CAN_DRIVER_OK);
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_ERROR_WARNING,
+                           QSET_CAN_DRIVER_FAULT_NONE);
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_ERROR_PASSIVE) ==
+           QSET_CAN_DRIVER_OK);
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_ERROR_PASSIVE,
+                           QSET_CAN_DRIVER_FAULT_NONE);
+    assert(qset_can_mock_force_state(&mock, QSET_CAN_CONTROLLER_BUS_OFF) ==
+           QSET_CAN_DRIVER_OK);
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_BUS_OFF,
+                           QSET_CAN_DRIVER_FAULT_BUS_OFF);
+    assert(qset_can_controller_recover_bus_off(&controller) == QSET_CAN_DRIVER_OK);
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_RECOVERING,
+                           QSET_CAN_DRIVER_FAULT_BUS_OFF);
+
+    /* Recovery success does not clear the latest fault. */
+    assert(qset_can_mock_complete_recovery(&mock, QSET_CAN_DRIVER_FAULT_NONE) ==
+           QSET_CAN_DRIVER_OK);
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_ERROR_ACTIVE,
+                           QSET_CAN_DRIVER_FAULT_BUS_OFF);
+
+    /* A newer fault replaces it, and successful operations keep it. */
+    assert(qset_can_mock_latch_fault(&mock, QSET_CAN_DRIVER_FAULT_HARDWARE) ==
+           QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_transmit(&controller, &frame) == QSET_CAN_DRIVER_OK);
+    expect_state_and_fault(&controller, QSET_CAN_CONTROLLER_ERROR_ACTIVE,
+                           QSET_CAN_DRIVER_FAULT_HARDWARE);
+
+    /* The snapshot matches the standalone getters. */
+    {
+        qset_can_controller_state_t state;
+        qset_can_driver_fault_t fault;
+
+        assert(qset_can_controller_get_state(&controller, &state) == QSET_CAN_DRIVER_OK);
+        assert(qset_can_controller_get_last_fault(&controller, &fault) ==
+               QSET_CAN_DRIVER_OK);
+        read_diagnostics(&controller, &diagnostics);
+        assert(diagnostics.bus_state == state);
+        assert(diagnostics.latest_driver_fault == fault);
+    }
+
+    /* Counters and the live values come back together, and reading clears
+     * neither. */
+    assert(qset_can_controller_record_invalid_frame(&controller) == QSET_CAN_DRIVER_OK);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.invalid_frames == 1u);
+    assert(diagnostics.bus_state == QSET_CAN_CONTROLLER_ERROR_ACTIVE);
+    assert(diagnostics.latest_driver_fault == QSET_CAN_DRIVER_FAULT_HARDWARE);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.invalid_frames == 1u);
+    assert(diagnostics.latest_driver_fault == QSET_CAN_DRIVER_FAULT_HARDWARE);
+
+    /* A failed state read returns the error and leaves the output unchanged;
+     * the counters are still there on the next call. */
+    memset(&diagnostics, 0x5c, sizeof(diagnostics));
+    unchanged = diagnostics;
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_GET_STATE,
+                                   QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_FAILURE);
+    assert(memcmp(&diagnostics, &unchanged, sizeof(diagnostics)) == 0);
+
+    /* The same for a failed fault read. The injected failure itself latches
+     * INTERNAL as the latest fault, which the next read then reports. */
+    assert(qset_can_mock_fail_next(&mock, QSET_CAN_MOCK_OP_GET_LAST_FAULT,
+                                   QSET_CAN_DRIVER_FAULT_INTERNAL) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_FAILURE);
+    assert(memcmp(&diagnostics, &unchanged, sizeof(diagnostics)) == 0);
+    read_diagnostics(&controller, &diagnostics);
+    assert(diagnostics.invalid_frames == 1u);
+    assert(diagnostics.latest_driver_fault == QSET_CAN_DRIVER_FAULT_INTERNAL);
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -1058,6 +1166,7 @@ int main(void)
     test_suppressed_violation_reports();
     test_controller_error_events();
     test_recovery_attempts_and_failures();
+    test_diagnostics_bus_state_and_latest_fault();
     puts("Portable C CAN transport: passed");
     return 0;
 }
