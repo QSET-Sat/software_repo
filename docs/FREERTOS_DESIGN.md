@@ -17,6 +17,10 @@ depths, and interrupt rules will be fixed after board selection.
   returns and resets that count. The transport calls it on every receive and
   adds the result to its saturating `rx_controller_overruns` counter. Reading
   diagnostics never clears them.
+- RX queue overflows are counted by the transport. The RX queue is not built
+  yet; when it is, its push must drop the new frame when the queue is full and
+  call `qset_can_controller_record_rx_queue_overflow` once for that frame. The
+  call is nonblocking and ISR-safe, and `rx_queue_overflows` saturates.
 - Receive items wrap `qset_can_frame_t` with C-only bus-channel and monotonic
   microsecond metadata. The frame type and Rust ABI remain unchanged.
 - Vendor adapters implement a required operations table and translate their

@@ -89,10 +89,14 @@ typedef struct qset_can_driver_ops {
  * They reset only when the controller handle is re-zeroed. */
 typedef struct {
     uint32_t rx_controller_overruns;
+    /* Received frames dropped because the RX queue was full. One per frame. */
+    uint32_t rx_queue_overflows;
 } qset_can_diagnostics_t;
 
 /* Statically allocate and zero-initialize this handle before calling init.
- * Callers serialize all access; the transport does not provide locking. */
+ * Callers serialize all access; the transport does not provide locking. The
+ * exception is qset_can_controller_record_rx_queue_overflow, which is safe to
+ * call from the ISR that feeds the RX queue. */
 typedef struct {
     const qset_can_driver_ops_t *ops;
     void *driver_context;
@@ -131,6 +135,11 @@ qset_can_driver_result_t qset_can_controller_recover_bus_off(
 qset_can_driver_result_t qset_can_controller_get_diagnostics(
     const qset_can_controller_t *controller,
     qset_can_diagnostics_t *out_diagnostics);
+/* Called by the RX queue push when the queue is full: the new frame is dropped,
+ * already queued frames are kept, and this is called once for that frame.
+ * Nonblocking and ISR-safe. Valid before init; the counter saturates. */
+qset_can_driver_result_t qset_can_controller_record_rx_queue_overflow(
+    qset_can_controller_t *controller);
 
 #ifdef __cplusplus
 }

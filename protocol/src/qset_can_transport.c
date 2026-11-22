@@ -296,3 +296,13 @@ qset_can_driver_result_t qset_can_controller_get_diagnostics(
     *out_diagnostics = controller->diagnostics;
     return QSET_CAN_DRIVER_OK;
 }
+
+qset_can_driver_result_t qset_can_controller_record_rx_queue_overflow(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.rx_queue_overflows, 1u);
+    return QSET_CAN_DRIVER_OK;
+}

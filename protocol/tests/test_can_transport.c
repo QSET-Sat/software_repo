@@ -403,6 +403,64 @@ static void test_rx_controller_overruns(void)
     assert(qset_can_mock_inject_rx_overruns(0, 1u) == QSET_CAN_DRIVER_NULL_POINTER);
 }
 
+static void test_rx_queue_overflows(void)
+{
+    qset_can_controller_t controller = {0};
+    qset_can_mock_t mock = {0};
+    qset_can_rx_item_t item;
+    qset_can_diagnostics_t diagnostics = {.rx_queue_overflows = 99u};
+    uint32_t index;
+
+    /* Starts at zero, and recording is valid before init. */
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_queue_overflows == 0u);
+    assert(qset_can_controller_record_rx_queue_overflow(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_queue_overflows == 1u);
+
+    init_and_start(&controller, &mock, QSET_CAN_BUS_PRIMARY);
+
+    /* Each call counts exactly one dropped frame. */
+    for (index = 2u; index <= 4u; ++index) {
+        assert(qset_can_controller_record_rx_queue_overflow(&controller) ==
+               QSET_CAN_DRIVER_OK);
+        assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+               QSET_CAN_DRIVER_OK);
+        assert(diagnostics.rx_queue_overflows == index);
+    }
+
+    /* Reading does not clear. */
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_queue_overflows == 4u);
+
+    /* Independent of the RX controller overrun counter, in both directions. */
+    assert(diagnostics.rx_controller_overruns == 0u);
+    assert(qset_can_mock_inject_rx_overruns(&mock, 7u) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_receive(&controller, &item) == QSET_CAN_DRIVER_NO_DATA);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_controller_overruns == 7u);
+    assert(diagnostics.rx_queue_overflows == 4u);
+
+    /* Saturates instead of wrapping. Seeded directly because reaching the
+     * limit one call at a time is impractical. */
+    controller.diagnostics.rx_queue_overflows = UINT32_MAX - 1u;
+    assert(qset_can_controller_record_rx_queue_overflow(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_queue_overflows == UINT32_MAX);
+    assert(qset_can_controller_record_rx_queue_overflow(&controller) == QSET_CAN_DRIVER_OK);
+    assert(qset_can_controller_get_diagnostics(&controller, &diagnostics) ==
+           QSET_CAN_DRIVER_OK);
+    assert(diagnostics.rx_queue_overflows == UINT32_MAX);
+    assert(diagnostics.rx_controller_overruns == 7u);
+
+    assert(qset_can_controller_record_rx_queue_overflow(0) == QSET_CAN_DRIVER_NULL_POINTER);
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -412,6 +470,7 @@ int main(void)
     test_states_faults_and_recovery();
     test_injected_control_failures();
     test_rx_controller_overruns();
+    test_rx_queue_overflows();
     puts("Portable C CAN transport: passed");
     return 0;
 }
