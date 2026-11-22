@@ -631,6 +631,89 @@ static void test_invalid_frames(void)
            QSET_CAN_DRIVER_NULL_POINTER);
 }
 
+typedef qset_can_driver_result_t (*record_fn_t)(qset_can_controller_t *controller);
+
+static uint32_t *correlation_counter(qset_can_diagnostics_t *diagnostics, size_t which)
+{
+    switch (which) {
+    case 0u:
+        return &diagnostics->late_responses;
+    case 1u:
+        return &diagnostics->duplicate_responses;
+    default:
+        return &diagnostics->unexpected_sequences;
+    }
+}
+
+static void read_diagnostics(const qset_can_controller_t *controller,
+                             qset_can_diagnostics_t *out)
+{
+    assert(qset_can_controller_get_diagnostics(controller, out) == QSET_CAN_DRIVER_OK);
+}
+
+static void test_response_correlation_counters(void)
+{
+    const record_fn_t record[] = {
+        qset_can_controller_record_late_response,
+        qset_can_controller_record_duplicate_response,
+        qset_can_controller_record_unexpected_sequence,
+    };
+    const size_t count = sizeof(record) / sizeof(record[0]);
+    size_t which;
+    size_t other;
+    uint32_t index;
+
+    for (which = 0u; which < count; ++which) {
+        qset_can_controller_t controller = {0};
+        qset_can_mock_t mock = {0};
+        qset_can_diagnostics_t diagnostics;
+
+        /* Starts at zero, and recording is valid before init. */
+        read_diagnostics(&controller, &diagnostics);
+        assert(*correlation_counter(&diagnostics, which) == 0u);
+        assert(record[which](&controller) == QSET_CAN_DRIVER_OK);
+        read_diagnostics(&controller, &diagnostics);
+        assert(*correlation_counter(&diagnostics, which) == 1u);
+
+        init_and_start(&controller, &mock, QSET_CAN_BUS_PRIMARY);
+
+        /* Each call counts exactly one response. */
+        for (index = 2u; index <= 4u; ++index) {
+            assert(record[which](&controller) == QSET_CAN_DRIVER_OK);
+            read_diagnostics(&controller, &diagnostics);
+            assert(*correlation_counter(&diagnostics, which) == index);
+        }
+
+        /* Reading does not clear. */
+        read_diagnostics(&controller, &diagnostics);
+        assert(*correlation_counter(&diagnostics, which) == 4u);
+
+        /* Only this counter moved: the other two correlation counters and
+         * all earlier counters are still zero. */
+        for (other = 0u; other < count; ++other) {
+            if (other != which) {
+                assert(*correlation_counter(&diagnostics, other) == 0u);
+            }
+        }
+        assert(diagnostics.rx_controller_overruns == 0u);
+        assert(diagnostics.rx_queue_overflows == 0u);
+        assert(diagnostics.tx_queue_full_failures == 0u);
+        assert(diagnostics.invalid_frames == 0u);
+
+        /* Saturates instead of wrapping. Seeded directly because reaching the
+         * limit one call at a time is impractical. */
+        *correlation_counter(&controller.diagnostics, which) = UINT32_MAX - 1u;
+        assert(record[which](&controller) == QSET_CAN_DRIVER_OK);
+        read_diagnostics(&controller, &diagnostics);
+        assert(*correlation_counter(&diagnostics, which) == UINT32_MAX);
+        assert(record[which](&controller) == QSET_CAN_DRIVER_OK);
+        read_diagnostics(&controller, &diagnostics);
+        assert(*correlation_counter(&diagnostics, which) == UINT32_MAX);
+
+        assert(record[which](0) == QSET_CAN_DRIVER_NULL_POINTER);
+    }
+}
+
 int main(void)
 {
     test_layout_and_lifecycle();
@@ -643,6 +726,7 @@ int main(void)
     test_rx_queue_overflows();
     test_tx_queue_full_failures();
     test_invalid_frames();
+    test_response_correlation_counters();
     puts("Portable C CAN transport: passed");
     return 0;
 }

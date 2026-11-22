@@ -100,6 +100,15 @@ typedef struct {
      * counted at only one of those levels. Frames rejected by hardware
      * acceptance filters and invalid frames passed to transmit are not counted. */
     uint32_t invalid_frames;
+    /* Request correlation results for status responses (nonzero sequence).
+     * Only the OBC issues requests in version 1, so these stay zero on other
+     * nodes. Each ignored response is counted in exactly one of them:
+     * late: matches a request already failed after its final timeout;
+     * duplicate: matches a request that already received its response;
+     * unexpected: matches no outstanding, completed, or failed request. */
+    uint32_t late_responses;
+    uint32_t duplicate_responses;
+    uint32_t unexpected_sequences;
 } qset_can_diagnostics_t;
 
 /* Statically allocate and zero-initialize this handle before calling init.
@@ -166,6 +175,23 @@ qset_can_driver_result_t qset_can_controller_record_tx_queue_full(
  * from the RX task only. Nonblocking. Valid before init; the counter
  * saturates. */
 qset_can_driver_result_t qset_can_controller_record_invalid_frame(
+    qset_can_controller_t *controller);
+/* Request correlation reporting. For each status response with a nonzero
+ * sequence from node N, the correlation logic accepts it if it matches N's
+ * outstanding request; otherwise it ignores it and calls exactly one of:
+ * - record_late_response: the sequence matches N's last request that failed
+ *   after its final timeout;
+ * - record_duplicate_response: the sequence matches N's last request that was
+ *   already answered;
+ * - record_unexpected_sequence: anything else.
+ * A response to an earlier attempt that arrives while the same sequence is
+ * still outstanding is accepted, not late. Call from the task that owns
+ * correlation only. Nonblocking. Valid before init; counters saturate. */
+qset_can_driver_result_t qset_can_controller_record_late_response(
+    qset_can_controller_t *controller);
+qset_can_driver_result_t qset_can_controller_record_duplicate_response(
+    qset_can_controller_t *controller);
+qset_can_driver_result_t qset_can_controller_record_unexpected_sequence(
     qset_can_controller_t *controller);
 
 #ifdef __cplusplus

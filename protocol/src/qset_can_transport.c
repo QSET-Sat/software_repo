@@ -328,3 +328,33 @@ qset_can_driver_result_t qset_can_controller_record_invalid_frame(
     saturating_add(&controller->diagnostics.invalid_frames, 1u);
     return QSET_CAN_DRIVER_OK;
 }
+
+qset_can_driver_result_t qset_can_controller_record_late_response(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.late_responses, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_duplicate_response(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.duplicate_responses, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_unexpected_sequence(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.unexpected_sequences, 1u);
+    return QSET_CAN_DRIVER_OK;
+}

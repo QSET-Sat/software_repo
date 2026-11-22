@@ -34,6 +34,15 @@ depths, and interrupt rules will be fixed after board selection.
   task must call `qset_can_controller_record_invalid_frame` once for each frame
   that protocol validation rejects. Frames removed by hardware acceptance
   filters, and invalid frames passed to transmit, are not counted.
+- Late, duplicate, and unexpected-sequence status responses are counted by the
+  transport. Request correlation is not built yet; when it is, it accepts a
+  response matching the node's outstanding request and otherwise calls exactly
+  one of `qset_can_controller_record_late_response` (matches the node's last
+  request that failed after its final timeout),
+  `qset_can_controller_record_duplicate_response` (matches the node's last
+  answered request), or `qset_can_controller_record_unexpected_sequence`
+  (anything else). It calls them only from the task that owns correlation.
+  These counters stay zero on nodes that do not issue requests.
 - Receive items wrap `qset_can_frame_t` with C-only bus-channel and monotonic
   microsecond metadata. The frame type and Rust ABI remain unchanged.
 - Vendor adapters implement a required operations table and translate their
