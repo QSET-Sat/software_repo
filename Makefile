@@ -4,6 +4,8 @@ RUST_SOURCES := $(wildcard protocol/rust/src/*.rs)
 CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -pedantic -O2
 TRANSPORT_SOURCES := protocol/src/qset_can_transport.c protocol/src/qset_can_mock.c
+# The RX path reads QSET_LOCAL_NODE_ID, so it is compiled once per node.
+RX_SOURCES := protocol/src/qset_can_rx.c
 
 # Firmware targets select their node at build time: make node-config NODE=<name>
 # where <name> is one of NODES below (e.g. NODE=ADCS).
@@ -11,7 +13,7 @@ TRANSPORT_SOURCES := protocol/src/qset_can_transport.c protocol/src/qset_can_moc
 NODES := OBC ADCS COMMS PAYLOAD BATT MPPT
 NODE_CONFIG := build/node/$(NODE)/qset_node_config.h
 
-.PHONY: all test rust-test rust-check-no-std c-test transport-test node-config node-test node-test-reject clean
+.PHONY: all test rust-test rust-check-no-std c-test transport-test node-config node-test node-test-reject rx-test clean
 
 all: $(RUST_STATICLIB)
 
@@ -127,7 +129,19 @@ node-test-reject:
 	fi
 	@echo "PASSED  missing ID: rejected as expected"
 
-test: rust-test rust-check-no-std c-test transport-test node-test node-test-reject
+# RX path tests (run by make test). The RX code uses QSET_LOCAL_NODE_ID, so
+# test_can_rx.c is built and run once per node, the same way node-test works.
+# It links the transport, the mock and the Rust library (for the decoders).
+rx-test: $(RUST_STATICLIB)
+	@for n in $(NODES); do \
+	    $(MAKE) -s node-config NODE=$$n || exit 1; \
+	    $(CC) $(CFLAGS) -Iprotocol/include -Ibuild/node/$$n protocol/tests/test_can_rx.c \
+	        $(RX_SOURCES) $(TRANSPORT_SOURCES) $(RUST_STATICLIB) \
+	        -o build/node/$$n/test_can_rx || exit 1; \
+	    ./build/node/$$n/test_can_rx || exit 1; \
+	done
+
+test: rust-test rust-check-no-std c-test transport-test node-test node-test-reject rx-test
 
 clean:
 	cargo clean --manifest-path $(RUST_MANIFEST)
