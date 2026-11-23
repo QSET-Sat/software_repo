@@ -295,6 +295,31 @@ periodic state.
 - The C transport maintains a fixed-size, statically allocated diagnostic
   structure with saturating counters, current bus state, and latest driver error.
 - A nonblocking getter returns a consistent snapshot.
+- Controller events (RX overruns and entries into error-warning,
+  error-passive, and bus-off) are reported through the driver operations
+  table, not by drivers writing transport counters. Each adapter counts these
+  events and returns-and-resets all counts through one required callback; the
+  portable transport collects them and owns the saturating counters. This
+  keeps adapters independent of the diagnostics layer and rejects adapters
+  that omit it. The transport does not count state changes by polling the
+  controller state, because episodes shorter than the poll interval would be
+  missed.
+- Bus-off recovery attempts are counted by the transport when a recovery
+  request reaches the driver. Failures are counted by the transport when the
+  driver rejects the request, and by the driver, as a controller event, when an
+  accepted attempt ends back in bus-off. That failure is not a new bus-off
+  event. Polling cannot distinguish a failed recovery from a successful one
+  followed quickly by a new bus-off, so the driver reports it.
+- The diagnostics snapshot includes the current bus state and the latest
+  driver fault (`qset_can_driver_fault_t`). The getter reads both live from the
+  driver on every call rather than storing copies, so they are never stale. If
+  either read fails, the getter returns that error and its output is
+  unchanged; counters are never lost and can be read on a later call.
+- Snapshot consistency comes from an optional platform critical section
+  installed on the controller. The getter copies all counters inside it, and
+  calls the driver for live values only outside it. The portable transport
+  stays free of RTOS calls; firmware supplies the section (for example
+  `taskENTER_CRITICAL`), and host tests may run without one.
 - Reading does not clear counters. Counters reset only with the processor or a
   future explicit maintenance operation.
 - Version 1 transmits only aggregate active-fault count; detailed diagnostic

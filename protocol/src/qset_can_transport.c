@@ -30,12 +30,40 @@ static int ops_are_complete(const qset_can_driver_ops_t *ops)
 {
     return ops->initialize != 0 && ops->start != 0 && ops->stop != 0 &&
            ops->receive != 0 && ops->transmit != 0 && ops->get_state != 0 &&
-           ops->get_last_fault != 0 && ops->recover_bus_off != 0;
+           ops->get_last_fault != 0 && ops->recover_bus_off != 0 &&
+           ops->take_events != 0;
 }
 
 static qset_can_driver_result_t normalize_result(qset_can_driver_result_t result)
 {
     return result_is_valid(result) ? result : QSET_CAN_DRIVER_FAILURE;
+}
+
+static void saturating_add(uint32_t *counter, uint32_t amount)
+{
+    if (amount > UINT32_MAX - *counter) {
+        *counter = UINT32_MAX;
+    } else {
+        *counter += amount;
+    }
+}
+
+/* A failed take adds nothing; the driver keeps its counts for the next call. */
+static void collect_events(qset_can_controller_t *controller)
+{
+    qset_can_driver_events_t events = {0u, 0u, 0u, 0u, 0u};
+    qset_can_diagnostics_t *diagnostics = &controller->diagnostics;
+    qset_can_driver_result_t result = normalize_result(
+        controller->ops->take_events(controller->driver_context, &events));
+
+    if (result != QSET_CAN_DRIVER_OK) {
+        return;
+    }
+    saturating_add(&diagnostics->rx_controller_overruns, events.rx_overruns);
+    saturating_add(&diagnostics->controller_warning_events, events.warning_events);
+    saturating_add(&diagnostics->controller_passive_events, events.passive_events);
+    saturating_add(&diagnostics->bus_off_events, events.bus_off_events);
+    saturating_add(&diagnostics->recovery_failures, events.recovery_failures);
 }
 
 static qset_can_driver_result_t read_state(const qset_can_controller_t *controller,
@@ -151,12 +179,15 @@ qset_can_driver_result_t qset_can_controller_receive(qset_can_controller_t *cont
         return QSET_CAN_DRIVER_INVALID_STATE;
     }
 
+    collect_events(controller);
     result = normalize_result(
         controller->ops->receive(controller->driver_context, &frame, &timestamp_us));
     if (result != QSET_CAN_DRIVER_OK) {
         return result;
     }
     if (!frame_is_valid(&frame)) {
+        /* Impossible Classic CAN shape from the driver: discard and count. */
+        saturating_add(&controller->diagnostics.invalid_frames, 1u);
         return QSET_CAN_DRIVER_FAILURE;
     }
 
@@ -216,21 +247,13 @@ qset_can_driver_result_t qset_can_controller_get_state(
     return QSET_CAN_DRIVER_OK;
 }
 
-qset_can_driver_result_t qset_can_controller_get_last_fault(
-    const qset_can_controller_t *controller,
-    qset_can_driver_fault_t *out_fault)
+static qset_can_driver_result_t read_fault(const qset_can_controller_t *controller,
+                                           qset_can_driver_fault_t *out_fault)
 {
-    qset_can_driver_fault_t fault;
-    qset_can_driver_result_t result;
-
-    if (controller == 0 || out_fault == 0) {
-        return QSET_CAN_DRIVER_NULL_POINTER;
-    }
-    if (controller->ops == 0) {
-        return QSET_CAN_DRIVER_INVALID_STATE;
-    }
-    result = normalize_result(
+    qset_can_driver_fault_t fault = QSET_CAN_DRIVER_FAULT_NONE;
+    qset_can_driver_result_t result = normalize_result(
         controller->ops->get_last_fault(controller->driver_context, &fault));
+
     if (result != QSET_CAN_DRIVER_OK) {
         return result;
     }
@@ -239,6 +262,19 @@ qset_can_driver_result_t qset_can_controller_get_last_fault(
     }
     *out_fault = fault;
     return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_get_last_fault(
+    const qset_can_controller_t *controller,
+    qset_can_driver_fault_t *out_fault)
+{
+    if (controller == 0 || out_fault == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    if (controller->ops == 0) {
+        return QSET_CAN_DRIVER_INVALID_STATE;
+    }
+    return read_fault(controller, out_fault);
 }
 
 qset_can_driver_result_t qset_can_controller_recover_bus_off(
@@ -260,5 +296,135 @@ qset_can_driver_result_t qset_can_controller_recover_bus_off(
     if (state != QSET_CAN_CONTROLLER_BUS_OFF) {
         return QSET_CAN_DRIVER_INVALID_STATE;
     }
-    return normalize_result(controller->ops->recover_bus_off(controller->driver_context));
+    /* Reaching the driver is an attempt. An immediate error is a failure; an
+     * accepted attempt that later fails is counted by the driver. */
+    saturating_add(&controller->diagnostics.recovery_attempts, 1u);
+    result = normalize_result(controller->ops->recover_bus_off(controller->driver_context));
+    if (result != QSET_CAN_DRIVER_OK) {
+        saturating_add(&controller->diagnostics.recovery_failures, 1u);
+    }
+    return result;
+}
+
+qset_can_driver_result_t qset_can_controller_get_diagnostics(
+    const qset_can_controller_t *controller,
+    qset_can_diagnostics_t *out_diagnostics)
+{
+    qset_can_diagnostics_t snapshot;
+    qset_can_driver_result_t result;
+
+    if (controller == 0 || out_diagnostics == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    /* Copy every counter inside one critical section so the snapshot is
+     * consistent. Driver calls stay outside it. */
+    if (controller->critical_enter != 0) {
+        controller->critical_enter(controller->critical_context);
+    }
+    snapshot = controller->diagnostics;
+    if (controller->critical_exit != 0) {
+        controller->critical_exit(controller->critical_context);
+    }
+    snapshot.bus_state = QSET_CAN_CONTROLLER_UNINITIALIZED;
+    snapshot.latest_driver_fault = QSET_CAN_DRIVER_FAULT_NONE;
+    if (controller->ops != 0) {
+        result = read_state(controller, &snapshot.bus_state);
+        if (result != QSET_CAN_DRIVER_OK) {
+            return result;
+        }
+        result = read_fault(controller, &snapshot.latest_driver_fault);
+        if (result != QSET_CAN_DRIVER_OK) {
+            return result;
+        }
+    }
+    *out_diagnostics = snapshot;
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_rx_queue_overflow(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.rx_queue_overflows, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_tx_queue_full(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.tx_queue_full_failures, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_invalid_frame(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.invalid_frames, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_late_response(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.late_responses, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_duplicate_response(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.duplicate_responses, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_unexpected_sequence(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.unexpected_sequences, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_record_suppressed_violation_report(
+    qset_can_controller_t *controller)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    saturating_add(&controller->diagnostics.suppressed_violation_reports, 1u);
+    return QSET_CAN_DRIVER_OK;
+}
+
+qset_can_driver_result_t qset_can_controller_set_critical_section(
+    qset_can_controller_t *controller,
+    qset_can_critical_section_fn_t enter_fn,
+    qset_can_critical_section_fn_t exit_fn,
+    void *context)
+{
+    if (controller == 0) {
+        return QSET_CAN_DRIVER_NULL_POINTER;
+    }
+    if ((enter_fn == 0) != (exit_fn == 0)) {
+        return QSET_CAN_DRIVER_INVALID_ARGUMENT;
+    }
+    controller->critical_enter = enter_fn;
+    controller->critical_exit = exit_fn;
+    controller->critical_context = (enter_fn == 0) ? 0 : context;
+    return QSET_CAN_DRIVER_OK;
 }
