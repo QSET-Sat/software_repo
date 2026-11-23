@@ -39,10 +39,10 @@ depths, and interrupt rules will be fixed after board selection.
   task is a normal wait and is not counted.
 - Invalid received frames are counted once each, at whichever level rejects
   them. Receive automatically discards and counts driver frames with an
-  impossible Classic CAN shape (ID above `0x7FF` or DLC above 8). The future RX
-  task must call `qset_can_controller_record_invalid_frame` once for each frame
-  that protocol validation rejects. Frames removed by hardware acceptance
-  filters, and invalid frames passed to transmit, are not counted.
+  impossible Classic CAN shape (ID above `0x7FF` or DLC above 8). The RX path
+  (`qset_can_rx.h`) calls `qset_can_controller_record_invalid_frame` once for
+  each frame that protocol validation rejects. Frames removed by hardware
+  acceptance filters, and invalid frames passed to transmit, are not counted.
 - Late, duplicate, and unexpected-sequence status responses are counted by the
   transport. Request correlation is not built yet; when it is, it accepts a
   response matching the node's outstanding request and otherwise calls exactly
@@ -58,6 +58,15 @@ depths, and interrupt rules will be fixed after board selection.
   once for each report it would send but skips because the per
   reason/offending-ID limit (1 per second) or the global limit (5 per second)
   is reached. Reports lost to bus-off or a full TX queue are not counted here.
+  The RX path decides whether this node owns a protocol error and passes each
+  report it owns to the reporter through its `report_violation` handler.
+- `qset_can_rx.h` is the receive path above the adapter. For each frame it
+  checks the structure, decodes the assigned message, applies the
+  protocol-error ownership rules, routes valid messages to the handlers the
+  node registered, and counts rejected frames. Hardware and driver failures
+  are left to the transport's counters and never become protocol violations.
+  It is built once per node (it uses `QSET_LOCAL_NODE_ID`) and does not use
+  FreeRTOS. Its rules and open assumptions are listed at the top of the header.
 - Receive items wrap `qset_can_frame_t` with C-only bus-channel and monotonic
   microsecond metadata. The frame type and Rust ABI remain unchanged.
 - Vendor adapters implement a required operations table and translate their
@@ -96,8 +105,8 @@ depths, and interrupt rules will be fixed after board selection.
 ## Ownership and data flow
 
 ```text
-CAN controller → C ISR → C RX queue → C RX task → Rust frame validation
-                                             → future Rust message decoder
+CAN controller → C ISR → C RX queue → C RX task → qset_can_rx_process
+                 (validate → decode → error ownership → route → count) → node handlers
 future Rust encoder → C TX request → C TX queue → C TX task → CAN controller
 ```
 
